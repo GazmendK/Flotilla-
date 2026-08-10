@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a capability or a change in behaviour
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the non-goals in the README first. Some things are missing on purpose.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not do today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "do nothing" — what happens if this is not built?
+
+  - type: textarea
+    id: correctness
+    attributes:
+      label: Effect on correctness
+      description: >
+        Does this change the consistency guarantees, the failure model, or the on-disk or wire
+        format? If yes, describe how — those changes need an ADR.

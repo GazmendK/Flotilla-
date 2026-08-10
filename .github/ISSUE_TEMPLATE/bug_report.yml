@@ -1,0 +1,51 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If a simulation run failed, the **seed** from the failure output is the single most
+        useful thing you can provide — with it, the failure reproduces exactly.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Commands, configuration, cluster size, and the simulation seed if there is one.
+      placeholder: |
+        ./gradlew :flotilla-sim:test --tests '*RandomizedRaftTest*' -Dflotilla.sim.seed=8134729
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0, or the commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, Other]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Relevant excerpts. Please avoid pasting megabytes.
+      render: text

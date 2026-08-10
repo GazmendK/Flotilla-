@@ -1,0 +1,28 @@
+# Normalize to LF in the repository and in every working tree.
+# Without this, a Windows checkout rewrites files to CRLF and the next Linux CI run reports
+# every line of every file as changed.
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF or cmd.exe misparses them.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+gradlew      text eol=lf
+gradlew.bat  text eol=crlf
+
+# Binary assets: never touched by line-ending or diff logic.
+*.jar    binary
+*.zip    binary
+*.png    binary
+*.jpg    binary
+*.gif    binary
+*.svg    text eol=lf
+*.ico    binary
+
+# Flotilla on-disk formats, so an accidental `git add` of a data directory cannot corrupt them.
+*.wal   binary
+*.snap  binary
+
+# Generated files: keep them out of diffs and out of language statistics.
+gradle/wrapper/gradle-wrapper.jar  binary linguist-vendored

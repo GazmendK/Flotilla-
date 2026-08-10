@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # Main build. Everything resolves through gradle/libs.versions.toml, so updates land there.
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      # Analyzers move together; splitting them across PRs just multiplies CI runs.
+      static-analysis:
+        patterns:
+          - "com.google.errorprone:*"
+          - "com.uber.nullaway:*"
+          - "com.diffplug.spotless*"
+          - "com.palantir.javaformat:*"
+          - "net.ltgt.errorprone*"
+      testing:
+        patterns:
+          - "org.junit*"
+          - "org.assertj:*"
+          - "com.tngtech.archunit:*"
+
+  # build-logic is a separate Gradle build and needs its own entry.
+  - package-ecosystem: gradle
+    directory: "/build-logic"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]

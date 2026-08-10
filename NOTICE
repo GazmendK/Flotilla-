@@ -1,0 +1,22 @@
+Flotilla
+Copyright 2026 The Flotilla Authors
+
+This product includes software developed at the Flotilla project
+(https://github.com/OWNER/flotilla).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full license text.
+
+---
+
+The design of this project is informed by the following published work. No code
+is derived from these sources; they are acknowledged for the ideas they
+contributed.
+
+  * Diego Ongaro and John Ousterhout, "In Search of an Understandable Consensus
+    Algorithm (Extended Version)", 2014.
+  * Diego Ongaro, "Consensus: Bridging Theory and Practice", PhD thesis,
+    Stanford University, 2014. In particular chapters 4 (membership changes),
+    6 (client interaction) and section 9.6 (PreVote).
+  * Maurice P. Herlihy and Jeannette M. Wing, "Linearizability: A Correctness
+    Condition for Concurrent Objects", 1990.

@@ -1,0 +1,41 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+# Machine-specific overrides; the committed gradle.properties stays authoritative.
+gradle-local.properties
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+out/
+
+# JVM crash and profiling output
+hs_err_pid*
+replay_pid*
+*.hprof
+*.jfr
+
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Flotilla runtime state: data directories created by local runs and demos
+/data/
+/deploy/**/data/
+*.log
+
+# Private development planning. These are personal working documents (phase plan, priorities,
+# interview and CV notes) and deliberately not part of the published repository.
+# The public-facing plan lives in ROADMAP.md.
+/PLAN.md
+/PHASES.md
+/APPENDIX.md
