@@ -50,5 +50,5 @@ gates that every later commit has to pass.
 - CI across Linux, macOS and Windows; CodeQL scanning; Dependabot for Gradle and Actions.
 - Apache-2.0 licensing, community health files, and the ADR process with the first four records.
 
-[Unreleased]: https://github.com/OWNER/flotilla/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/flotilla/releases/tag/v0.1.0
+[Unreleased]: https://github.com/GazmendK/Flotilla-/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/GazmendK/Flotilla-/releases/tag/v0.1.0

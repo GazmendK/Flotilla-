@@ -1,10 +1,9 @@
 # Every change is reviewed by the maintainer.
-# Replace OWNER with the GitHub account once the repository is pushed.
-*   @OWNER
+*   @GazmendK
 
 # The consensus core, the storage format and the wire schema carry compatibility and safety
 # guarantees. Listing them separately is a reminder that a change here is never routine.
-/flotilla-core/                                    @OWNER
-/flotilla-node/src/main/java/dev/flotilla/storage/  @OWNER
-/proto/                                            @OWNER
-/docs/adr/                                         @OWNER
+/flotilla-core/                                    @GazmendK
+/flotilla-node/src/main/java/dev/flotilla/storage/  @GazmendK
+/proto/                                            @GazmendK
+/docs/adr/                                         @GazmendK

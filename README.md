@@ -5,18 +5,17 @@
   whose correctness is <em>demonstrated</em>, not claimed.</strong>
 </p>
 
-<!-- Replace OWNER with the GitHub account or organisation once the repository is pushed. -->
 <p align="center">
-  <a href="https://github.com/OWNER/flotilla/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/OWNER/flotilla/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/GazmendK/Flotilla-/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/GazmendK/Flotilla-/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <img alt="Java" src="https://img.shields.io/badge/Java-25-orange.svg">
 </p>
 
 ---
 
-> **Status: Phase 1 of 15 — foundation.**
-> The build, the toolchain and the quality gates are in place. The consensus implementation
-> starts in Phase 3. See [`ROADMAP.md`](ROADMAP.md) for the full plan and what exists today.
+> **Status: Phase 2 of 15 — domain model and ports.**
+> The build, the toolchain, the quality gates and the consensus vocabulary are in place. The
+> algorithm itself starts in Phase 3. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
 
@@ -39,8 +38,8 @@ it a few times" and "here is the seed that reproduces the bug".
 Not yet available — it arrives with the container images in Phase 14. Until then:
 
 ```bash
-git clone https://github.com/OWNER/flotilla.git
-cd flotilla
+git clone https://github.com/GazmendK/Flotilla-.git
+cd Flotilla-
 ./gradlew build
 ```
 
