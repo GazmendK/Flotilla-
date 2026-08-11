@@ -31,11 +31,11 @@ true.
 
 - [ ] `./gradlew build` passes.
 - [ ] New behaviour has tests. New behaviour in the consensus core also has simulation coverage.
-- [ ] Public types have Javadoc, and every new package has a `package-info.java`.
+- [ ] Every new package has a `package-info.java` carrying `@NullMarked`.
 - [ ] Affected documentation under `docs/` is updated in the same change, not later.
 - [ ] A new ADR exists if a non-obvious decision was made — see `docs/adr/README.md`.
 - [ ] `CHANGELOG.md` has an entry under `[Unreleased]`.
-- [ ] No `TODO` without a linked issue.
+- [ ] No `TODO` markers. Open an issue instead.
 
 ## Commit messages
 
@@ -64,7 +64,11 @@ Formatting is not a matter of opinion here — `spotlessApply` decides it. Beyon
   contract test that runs against every implementation. See ADR-0007.
 - **Ordered collections in anything that must be deterministic** — the consensus core and the
   state machine. A `HashMap` iteration is enough to make two replicas diverge.
-- Prefer a named type over a comment, and a test over a claim.
+- **No comments and no Javadoc.** The only comment in a source file is the SPDX licence header,
+  which Spotless applies. Meaning is carried by names, types and tests; reasoning that does not
+  fit into those belongs in `docs/` or in an ADR, where it can be read as a whole rather than
+  scattered across files.
+- Prefer a named type over an explanation, and a test over a claim.
 
 ## Reporting a bug in the consensus layer
 

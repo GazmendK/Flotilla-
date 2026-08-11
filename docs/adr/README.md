@@ -48,3 +48,6 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0003](0003-gradle-over-maven.md) | Use Gradle with convention plugins instead of Maven | Accepted |
 | [0004](0004-pure-deterministic-core.md) | Keep the Raft core pure and deterministic | Accepted |
 | [0005](0005-three-module-layout.md) | Three modules, with internal layering enforced by tests | Accepted |
+| [0006](0006-tick-based-logical-time.md) | Time enters the core as logical ticks | Accepted |
+| [0007](0007-value-types-and-primitives.md) | Wrapper types where they prevent bugs, primitives where they do not | Accepted |
+| [0008](0008-no-mocking-policy.md) | No mocking framework; fakes plus contract tests instead | Accepted |

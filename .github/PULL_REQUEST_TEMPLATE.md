@@ -21,7 +21,7 @@
 
 - [ ] `./gradlew build` passes
 - [ ] New behaviour has tests; consensus changes have simulation coverage
-- [ ] Javadoc on new public types, `package-info.java` for new packages
+- [ ] `package-info.java` with `@NullMarked` for new packages; no comments or `TODO` markers
 - [ ] Affected `docs/` updated in this PR
 - [ ] ADR added if a non-obvious decision was made
 - [ ] `CHANGELOG.md` entry under `[Unreleased]`

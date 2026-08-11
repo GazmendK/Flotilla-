@@ -10,6 +10,25 @@ not stable before 1.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- The consensus domain model in `flotilla-core`: `NodeId`, `Bytes`, `LogEntry`, `HardState`,
+  `SoftState`, `ClusterConfig` with voters and non-voting learners, and `RaftConfig` with
+  validation that explains what to change rather than only what is wrong.
+- The full RPC hierarchy as a sealed interface, so handling a message is a `switch` the compiler
+  checks for completeness: RequestVote (including PreVote), AppendEntries, InstallSnapshot,
+  TimeoutNow and ReadIndex.
+- The ports the core reaches the world through — `LogStore`, `StableStore`, `RandomSource` — and
+  `InMemoryLogStore` as the first implementation. There is deliberately no clock port: time enters
+  as logical ticks.
+- `Ready`, the contract between the pure core and the runtime, documenting the ordering
+  requirement that persistence must complete before the corresponding messages are sent.
+- `@RaftSpec`, linking types and methods to the paper or dissertation section they implement.
+- Architecture tests that enforce the core's determinism: no I/O, no threads, no wall clock, no
+  unseeded randomness, no hash-ordered collections, no third-party dependencies. Package layering
+  inside `flotilla-node` and the isolation of the simulation are enforced the same way.
+- jqwik for property-based tests, alongside JUnit and AssertJ.
+
 ## [0.1.0] - 2026-08-05
 
 Project foundation. No consensus code yet — this release establishes the build and the quality

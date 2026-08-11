@@ -17,6 +17,7 @@ palantirJavaFormat = "2.96.0"
 junit = "6.1.2"
 assertj = "3.27.7"
 archunit = "1.5.0"
+jqwik = "1.10.1"
 
 [libraries]
 # Nullness annotations. compileOnly everywhere: they carry no runtime behaviour, and
@@ -30,7 +31,10 @@ junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
-archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+# Plain ArchUnit rather than the archunit-junit5 integration: the rules run inside ordinary
+# @Test methods, which keeps them independent of the JUnit platform version.
+archunit = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
+jqwik = { module = "net.jqwik:jqwik", version.ref = "jqwik" }
 
 # Plugin marker artifacts, consumed by build-logic so the convention plugins can apply them.
 # Using the markers (rather than the implementation coordinates) keeps the version identical

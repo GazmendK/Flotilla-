@@ -58,6 +58,7 @@ This section is the point of the project. It will fill in as the phases land:
 | ☐ | Crash-consistency verified by injecting a crash at every physical write | 6 |
 | ☐ | A linearizability checker, run over real cluster histories | 11 |
 | ☐ | Fault injection proving the checkers actually detect known-bad behaviour | 5, 11 |
+| ☑ | Determinism enforced as tests: the core cannot acquire I/O, threads, a clock or unseeded randomness | 2 |
 | ☑ | Static analysis as build failures: Error Prone, NullAway, `-Werror` | 1 |
 | ☑ | CI on Linux, macOS **and Windows** — file and fsync semantics differ, and storage bugs hide there | 1 |
 
@@ -102,7 +103,7 @@ exercises is the shipped consensus code, not a model of it.
 | Phase | | Phase | |
 |---|---|---|---|
 | 1. Foundation | ☑ | 9. gRPC transport, real cluster | ☐ |
-| 2. Domain model and ports | ☐ | 10. Snapshots and compaction | ☐ |
+| 2. Domain model and ports | ☑ | 10. Snapshots and compaction | ☐ |
 | 3. Leader election | ☐ | 11. Linearizable reads and checker | ☐ |
 | 4. Log replication | ☐ | 12. Membership changes | ☐ |
 | 5. Deterministic simulation | ☐ | 13. Observability and visualizer | ☐ |
@@ -126,6 +127,7 @@ Stated up front, because a bounded scope is a design decision:
 
 | Document | Contents |
 |---|---|
+| [`docs/architecture.md`](docs/architecture.md) | The pure core, the `Ready` contract, the ports, and what is checked mechanically |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |
 | [`ROADMAP.md`](ROADMAP.md) | The 15 development phases, and why they are ordered that way |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, and what "done" means here |
