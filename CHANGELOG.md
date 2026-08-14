@@ -12,6 +12,20 @@ not stable before 1.0.0.
 
 ### Added
 
+- Leader election: randomized election timeouts, the term rules from Figure 2, and the election
+  restriction of §5.4.1 that compares last term before last index and thereby guarantees Leader
+  Completeness.
+- PreVote and CheckQuorum, both enabled by default. A partitioned node cycles as `PRE_CANDIDATE`
+  at a constant term instead of inflating it, and a leader that stops reaching a majority steps
+  down. Both are covered by tests that run the same scenario with the mechanism disabled and
+  assert the failure it prevents.
+- A leader lease that makes a server ignore vote requests while it still has a leader, applied
+  before the term rules rather than after them.
+- Roles as a sealed type hierarchy, so adding a role is a compile error at every site that
+  switches on it.
+- `docs/raft-implementation.md`, mapping every rule of Figure 2 either to a code location or to
+  the phase that will implement it.
+
 - The consensus domain model in `flotilla-core`: `NodeId`, `Bytes`, `LogEntry`, `HardState`,
   `SoftState`, `ClusterConfig` with voters and non-voting learners, and `RaftConfig` with
   validation that explains what to change rather than only what is wrong.
