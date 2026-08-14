@@ -53,3 +53,5 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0008](0008-no-mocking-policy.md) | No mocking framework; fakes plus contract tests instead | Accepted |
 | [0009](0009-prevote-and-checkquorum-by-default.md) | PreVote and CheckQuorum are on by default | Accepted |
 | [0010](0010-state-pattern-for-roles.md) | Roles are types, not a field | Accepted |
+| [0011](0011-commit-only-current-term-entries.md) | A leader commits only entries from its own term | Accepted |
+| [0012](0012-conflict-hints-for-log-backtracking.md) | Followers return conflict hints instead of being probed one entry at a time | Accepted |

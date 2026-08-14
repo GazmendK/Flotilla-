@@ -19,8 +19,13 @@ import dev.flotilla.core.port.RandomSource;
 import dev.flotilla.core.state.Candidate;
 import dev.flotilla.core.state.Follower;
 import dev.flotilla.core.state.Leader;
+import dev.flotilla.core.state.Progress;
+import dev.flotilla.core.state.ProgressState;
 import dev.flotilla.core.state.RaftState;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
@@ -33,6 +38,9 @@ public final class RaftNode {
     private final LogStore log;
     private final ElectionTimer electionTimer;
 
+    private final List<RaftMessage> outbox = new ArrayList<>();
+    private final List<LogEntry> unpersisted = new ArrayList<>();
+
     private RaftState state;
     private long currentTerm;
 
@@ -40,9 +48,9 @@ public final class RaftNode {
     private NodeId votedFor;
 
     private long commitIndex;
+    private long emittedCommitIndex;
     private int heartbeatElapsedTicks;
 
-    private Ready.Builder pending = Ready.builder();
     private HardState publishedHardState;
     private SoftState publishedSoftState;
 
@@ -59,6 +67,7 @@ public final class RaftNode {
         this.currentTerm = persisted.currentTerm();
         this.votedFor = persisted.votedFor();
         this.commitIndex = persisted.commitIndex();
+        this.emittedCommitIndex = persisted.commitIndex();
         this.state = Follower.withoutLeader();
         this.publishedHardState = persisted;
         this.publishedSoftState = SoftState.follower();
@@ -92,8 +101,22 @@ public final class RaftNode {
         return commitIndex;
     }
 
+    public long lastLogIndex() {
+        return log.lastIndex();
+    }
+
     public boolean isLeader() {
         return state instanceof Leader;
+    }
+
+    public boolean propose(Bytes command) {
+        Objects.requireNonNull(command, "command");
+        if (!(state instanceof Leader)) {
+            return false;
+        }
+        appendToOwnLog(List.of(LogEntry.normal(currentTerm, log.lastIndex() + 1, command)));
+        broadcastAppend();
+        return true;
     }
 
     public void tick() {
@@ -109,21 +132,32 @@ public final class RaftNode {
     }
 
     public Ready ready() {
+        Ready.Builder builder = Ready.builder();
+        builder.persistAll(unpersisted);
+        for (RaftMessage message : outbox) {
+            builder.send(message);
+        }
+        if (commitIndex > emittedCommitIndex) {
+            int count = (int) Math.min(Integer.MAX_VALUE, commitIndex - emittedCommitIndex);
+            builder.apply(log.entriesFrom(emittedCommitIndex + 1, count, Long.MAX_VALUE));
+        }
         HardState hardState = currentHardState();
         if (!hardState.equals(publishedHardState)) {
-            pending.hardState(hardState);
+            builder.hardState(hardState);
         }
         SoftState softState = currentSoftState();
         if (!softState.equals(publishedSoftState)) {
-            pending.softState(softState);
+            builder.softState(softState);
         }
-        return pending.build();
+        return builder.build();
     }
 
     public void advance() {
+        outbox.clear();
+        unpersisted.clear();
+        emittedCommitIndex = commitIndex;
         publishedHardState = currentHardState();
         publishedSoftState = currentSoftState();
-        pending = Ready.builder();
     }
 
     public void step(RaftMessage message) {
@@ -198,7 +232,7 @@ public final class RaftNode {
 
         if (heartbeatElapsedTicks >= config.heartbeatTicks()) {
             heartbeatElapsedTicks = 0;
-            broadcastHeartbeat();
+            broadcastHeartbeat(leader);
         }
 
         if (config.checkQuorum() && electionTimer.elapsedTicks() >= config.electionTimeoutMinTicks()) {
@@ -284,7 +318,7 @@ public final class RaftNode {
         }
     }
 
-    @RaftSpec("§5.3 Log replication")
+    @RaftSpec("Figure 2, AppendEntries RPC")
     private void handleAppendEntries(AppendEntriesRequest request) {
         becomeFollower(currentTerm, request.from());
 
@@ -293,16 +327,128 @@ public final class RaftNode {
             send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, log.lastIndex() + 1, 0));
             return;
         }
-        if (log.termAt(prevIndex) != request.prevLogTerm()) {
-            send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, prevIndex, log.termAt(prevIndex)));
+        long localPrevTerm = log.termAt(prevIndex);
+        if (localPrevTerm != request.prevLogTerm()) {
+            send(AppendEntriesResponse.rejected(
+                    id(),
+                    request.from(),
+                    currentTerm,
+                    firstIndexOfTermEndingAt(prevIndex, localPrevTerm),
+                    localPrevTerm));
             return;
         }
-        send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, request.lastIndex()));
+
+        long lastNewIndex = storeEntries(request.entries(), prevIndex);
+        advanceFollowerCommit(request.leaderCommit(), lastNewIndex);
+        send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, lastNewIndex));
+    }
+
+    private long storeEntries(List<LogEntry> entries, long prevIndex) {
+        if (entries.isEmpty()) {
+            return prevIndex;
+        }
+        long conflictIndex = 0;
+        for (LogEntry entry : entries) {
+            if (entry.index() > log.lastIndex()) {
+                break;
+            }
+            if (log.termAt(entry.index()) != entry.term()) {
+                conflictIndex = entry.index();
+                break;
+            }
+        }
+        if (conflictIndex > 0) {
+            log.truncateSuffixFrom(conflictIndex);
+        }
+        long firstMissing = log.lastIndex() + 1;
+        List<LogEntry> toAppend =
+                entries.stream().filter(entry -> entry.index() >= firstMissing).toList();
+        if (!toAppend.isEmpty()) {
+            log.append(toAppend);
+            unpersisted.addAll(toAppend);
+        }
+        return entries.getLast().index();
+    }
+
+    @RaftSpec("Figure 2, AppendEntries RPC rule 5")
+    private void advanceFollowerCommit(long leaderCommit, long lastNewIndex) {
+        commitIndex = Math.max(commitIndex, Math.min(leaderCommit, lastNewIndex));
     }
 
     private void handleAppendEntriesResponse(AppendEntriesResponse response) {
-        if (state instanceof Leader leader) {
-            leader.markActive(response.from());
+        if (!(state instanceof Leader leader)) {
+            return;
+        }
+        leader.markActive(response.from());
+        Progress progress = leader.progressFor(response.from());
+        if (progress == null) {
+            return;
+        }
+        progress.recordReply();
+
+        if (response.success()) {
+            boolean advanced = progress.maybeUpdate(response.matchIndex());
+            if (progress.state() == ProgressState.PROBE) {
+                progress.becomeReplicate();
+            }
+            if (advanced) {
+                maybeAdvanceLeaderCommit(leader);
+            }
+        } else {
+            progress.resetNextIndex(nextIndexAfterRejection(response));
+            progress.becomeProbe();
+        }
+        sendAppendIfPending(response.from(), progress);
+    }
+
+    @RaftSpec("§5.3 Log replication")
+    private long nextIndexAfterRejection(AppendEntriesResponse response) {
+        if (response.conflictTerm() > 0) {
+            long lastMatching = lastIndexOfTerm(response.conflictTerm());
+            if (lastMatching > 0) {
+                return lastMatching + 1;
+            }
+        }
+        return response.conflictIndex();
+    }
+
+    private long lastIndexOfTerm(long term) {
+        for (long index = log.lastIndex(); index >= log.firstIndex(); index--) {
+            long indexTerm = log.termAt(index);
+            if (indexTerm == term) {
+                return index;
+            }
+            if (indexTerm < term) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    private long firstIndexOfTermEndingAt(long index, long term) {
+        long first = index;
+        while (first > log.firstIndex() && log.termAt(first - 1) == term) {
+            first--;
+        }
+        return first;
+    }
+
+    @RaftSpec("§5.4.2 Committing entries from previous terms")
+    private void maybeAdvanceLeaderCommit(Leader leader) {
+        List<Long> matched = new ArrayList<>();
+        for (NodeId voter : cluster.voters()) {
+            if (voter.equals(id())) {
+                matched.add(log.lastIndex());
+            } else {
+                Progress progress = leader.progressFor(voter);
+                matched.add(progress == null ? 0L : progress.matchIndex());
+            }
+        }
+        matched.sort(Comparator.reverseOrder());
+        long replicatedOnQuorum = matched.get(cluster.quorum() - 1);
+
+        if (replicatedOnQuorum > commitIndex && log.termAt(replicatedOnQuorum) == currentTerm) {
+            commitIndex = replicatedOnQuorum;
         }
     }
 
@@ -319,20 +465,62 @@ public final class RaftNode {
     private void becomeLeader() {
         Leader leader = new Leader();
         leader.markActive(id());
+        for (NodeId peer : cluster.allMembers()) {
+            if (!peer.equals(id())) {
+                leader.trackPeer(peer, log.lastIndex() + 1);
+            }
+        }
         state = leader;
         electionTimer.reset();
         heartbeatElapsedTicks = 0;
-        broadcastHeartbeat();
+
+        appendToOwnLog(List.of(LogEntry.noOp(currentTerm, log.lastIndex() + 1)));
+        broadcastAppend();
     }
 
-    private void broadcastHeartbeat() {
-        for (NodeId peer : cluster.allMembers()) {
-            if (peer.equals(id())) {
-                continue;
-            }
-            send(new AppendEntriesRequest(
-                    id(), peer, currentTerm, log.lastIndex(), lastLogTerm(), List.of(), commitIndex));
+    private void appendToOwnLog(List<LogEntry> entries) {
+        log.append(entries);
+        unpersisted.addAll(entries);
+        if (state instanceof Leader leader) {
+            maybeAdvanceLeaderCommit(leader);
         }
+    }
+
+    private void broadcastAppend() {
+        if (!(state instanceof Leader leader)) {
+            return;
+        }
+        for (Map.Entry<NodeId, Progress> peer : leader.peers().entrySet()) {
+            sendAppendIfPending(peer.getKey(), peer.getValue());
+        }
+    }
+
+    private void broadcastHeartbeat(Leader leader) {
+        for (Map.Entry<NodeId, Progress> peer : leader.peers().entrySet()) {
+            long prevIndex = peer.getValue().matchIndex();
+            send(new AppendEntriesRequest(
+                    id(), peer.getKey(), currentTerm, prevIndex, log.termAt(prevIndex), List.of(), commitIndex));
+        }
+    }
+
+    private void sendAppendIfPending(NodeId peer, Progress progress) {
+        if (progress.nextIndex() <= log.lastIndex()) {
+            sendAppend(peer, progress);
+        }
+    }
+
+    private void sendAppend(NodeId peer, Progress progress) {
+        if (progress.isThrottled(config.maxInflightAppends())) {
+            return;
+        }
+        long prevIndex = progress.nextIndex() - 1;
+        int maxEntries = progress.state() == ProgressState.PROBE ? 1 : config.maxEntriesPerAppend();
+        List<LogEntry> entries = progress.nextIndex() > log.lastIndex()
+                ? List.of()
+                : log.entriesFrom(progress.nextIndex(), maxEntries, config.maxAppendBytes());
+
+        send(new AppendEntriesRequest(id(), peer, currentTerm, prevIndex, log.termAt(prevIndex), entries, commitIndex));
+        progress.recordSend();
     }
 
     private boolean isAtLeastAsUpToDate(long candidateLastIndex, long candidateLastTerm) {
@@ -365,11 +553,11 @@ public final class RaftNode {
     }
 
     private void send(RaftMessage message) {
-        pending.send(message);
+        outbox.add(message);
     }
 
     @Override
     public String toString() {
-        return "RaftNode[" + id() + " term=" + currentTerm + " role=" + state.role() + "]";
+        return "RaftNode[" + id() + " term=" + currentTerm + " role=" + state.role() + " commit=" + commitIndex + "]";
     }
 }

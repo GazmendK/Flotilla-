@@ -9,13 +9,30 @@ import dev.flotilla.core.RaftRole;
 import dev.flotilla.core.RaftSpec;
 import java.util.Collections;
 import java.util.Objects;
+import java.util.SortedMap;
 import java.util.SortedSet;
+import java.util.TreeMap;
 import java.util.TreeSet;
+import org.jspecify.annotations.Nullable;
 
-@RaftSpec(value = "§6.2 Routing requests to the leader", source = RaftSpec.Source.DISSERTATION)
+@RaftSpec("Figure 2, Volatile state on leaders")
 public final class Leader implements RaftState {
 
     private final SortedSet<NodeId> recentlyActive = new TreeSet<>();
+    private final SortedMap<NodeId, Progress> peers = new TreeMap<>();
+
+    public void trackPeer(NodeId peer, long nextIndex) {
+        peers.put(Objects.requireNonNull(peer, "peer"), new Progress(nextIndex));
+    }
+
+    public SortedMap<NodeId, Progress> peers() {
+        return Collections.unmodifiableSortedMap(peers);
+    }
+
+    @Nullable
+    public Progress progressFor(NodeId peer) {
+        return peers.get(peer);
+    }
 
     public void markActive(NodeId peer) {
         recentlyActive.add(Objects.requireNonNull(peer, "peer"));

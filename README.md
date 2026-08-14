@@ -13,10 +13,10 @@
 
 ---
 
-> **Status: Phase 3 of 15 — leader election.**
-> A cluster elects a leader, keeps it stable, replaces it when it disappears, and survives a
-> partitioned node returning with PreVote and CheckQuorum. Log replication is Phase 4.
-> See [`ROADMAP.md`](ROADMAP.md) for the full plan.
+> **Status: Phase 4 of 15 — log replication.**
+> A cluster elects a leader, replicates entries, commits them under the rule from §5.4.2, and
+> brings a diverged follower back into agreement. Everything still runs in memory; durability is
+> Phase 6. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
 
@@ -54,7 +54,7 @@ This section is the point of the project. It will fill in as the phases land:
 |---|---|---|
 | ☐ | Deterministic simulation: virtual clock and network, partitions, crashes, seeded and reproducible | 5 |
 | ☐ | All five safety properties from Figure 3 of the Raft paper, checked after every step | 5 |
-| ☐ | Figure 7 and Figure 8 of the paper encoded as test cases | 4 |
+| ☑ | Figure 7 and Figure 8 of the paper encoded as test cases | 4 |
 | ☐ | Crash-consistency verified by injecting a crash at every physical write | 6 |
 | ☐ | A linearizability checker, run over real cluster histories | 11 |
 | ☐ | Fault injection proving the checkers actually detect known-bad behaviour | 5, 11 |
@@ -106,7 +106,7 @@ exercises is the shipped consensus code, not a model of it.
 | 1. Foundation | ☑ | 9. gRPC transport, real cluster | ☐ |
 | 2. Domain model and ports | ☑ | 10. Snapshots and compaction | ☐ |
 | 3. Leader election | ☑ | 11. Linearizable reads and checker | ☐ |
-| 4. Log replication | ☐ | 12. Membership changes | ☐ |
+| 4. Log replication | ☑ | 12. Membership changes | ☐ |
 | 5. Deterministic simulation | ☐ | 13. Observability and visualizer | ☐ |
 | 6. Persistence and recovery | ☐ | 14. CLI, packaging, demo | ☐ |
 | 7. Node runtime | ☐ | 15. Benchmarks and release | ☐ |

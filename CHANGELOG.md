@@ -12,6 +12,16 @@ not stable before 1.0.0.
 
 ### Added
 
+- Log replication: per-peer progress tracking with probe and replicate phases, batching bounded by
+  both entry count and payload size, and a bounded inflight window.
+- The commit rule of §5.4.2: a leader advances the commit index only onto entries of its own term,
+  and everything before them commits transitively. A leader appends a no-op of its own term on
+  election, which is what makes any commit possible after a leadership change.
+- Conflict hints on rejected appends, so a follower that diverged by a thousand entries
+  resynchronizes in a handful of round trips instead of a thousand.
+- Figure 7 and Figure 8 of the paper encoded as tests. Removing the current-term check from the
+  commit rule makes `Figure8Test` fail, which is the point of having it.
+
 - Leader election: randomized election timeouts, the term rules from Figure 2, and the election
   restriction of §5.4.1 that compares last term before last index and thereby guarantees Leader
   Completeness.

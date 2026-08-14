@@ -17,9 +17,9 @@ Version)](https://raft.github.io/raft.pdf) unless marked *dissertation*, which m
 |---|---|---|
 | `currentTerm`, `votedFor` persisted before responding | `HardState`, `Ready.requiresSync()` | modelled; the sync itself is Phase 7 |
 | `log[]` persisted | `LogStore`, `InMemoryLogStore` | in memory; durable store is Phase 6 |
-| `commitIndex` volatile | `RaftNode.commitIndex` | advanced in Phase 4 |
+| `commitIndex` volatile | `RaftNode.commitIndex` | done |
 | `lastApplied` volatile | — | Phase 7, owned by the apply loop |
-| `nextIndex[]`, `matchIndex[]` on leaders | — | Phase 4 |
+| `nextIndex[]`, `matchIndex[]` on leaders | `state.Progress`, held by `state.Leader` | done |
 
 ## Figure 2 — RequestVote RPC
 
@@ -34,9 +34,9 @@ Version)](https://raft.github.io/raft.pdf) unless marked *dissertation*, which m
 |---|---|---|
 | 1. Reply false if `term < currentTerm` | `RaftNode.replyToStaleSender` | done |
 | 2. Reply false if the entry at `prevLogIndex` does not match `prevLogTerm` | `RaftNode.handleAppendEntries` | done |
-| 3. Delete a conflicting entry and everything after it | `LogStore.truncateSuffixFrom` | Phase 4 |
-| 4. Append any new entries | — | Phase 4 |
-| 5. `commitIndex = min(leaderCommit, index of last new entry)` | — | Phase 4 |
+| 3. Delete a conflicting entry and everything after it | `RaftNode.storeEntries` | done |
+| 4. Append any new entries | `RaftNode.storeEntries` | done |
+| 5. `commitIndex = min(leaderCommit, index of last new entry)` | `RaftNode.advanceFollowerCommit` | done |
 
 ## Figure 2 — Rules for Servers
 
@@ -51,13 +51,23 @@ Version)](https://raft.github.io/raft.pdf) unless marked *dissertation*, which m
 | Candidates: step down for a new leader | `RaftNode.handleAppendEntries` | done |
 | Candidates: restart the election on timeout | `RaftNode.tickElectionTimeout` | done |
 | Leaders: send periodic heartbeats | `RaftNode.tickLeader` | done |
-| Leaders: replicate on proposal, retry on failure | — | Phase 4 |
-| Leaders: advance `commitIndex` on a majority, current term only | — | Phase 4 |
+| Leaders: replicate on proposal, retry on failure | `RaftNode.sendAppend`, `state.Progress` | done |
+| Leaders: advance `commitIndex` on a majority, current term only | `RaftNode.maybeAdvanceLeaderCommit` | done |
+
+## Figure 7 and Figure 8
+
+Both figures are encoded as tests rather than described in prose.
+
+`Figure7Test` builds each of the six follower logs (a) to (f) from the paper and asserts the
+leader brings every one of them into exact agreement. `Figure8Test` constructs the scenario in
+which an entry from an earlier term sits on a majority and asserts that it is **not** committed;
+removing the current-term check from `maybeAdvanceLeaderCommit` makes it fail with
+`expected: 0L but was: 2L`.
 
 ## Figure 3 — Safety properties
 
 Checked mechanically from Phase 5, when the simulation exists. Until then they hold by
-construction of the election rules only.
+construction of the election and commit rules only.
 
 | Property | Status |
 |---|---|
@@ -74,7 +84,8 @@ construction of the election rules only.
 | PreVote (*dissertation* §9.6) | `RaftNode.startElection`, `keepsTermOnHigherTerm` | done, on by default |
 | CheckQuorum | `RaftNode.tickLeader` | done, on by default |
 | Leader lease against disruptive votes | `RaftNode.isWithinLeaderLease` | done |
-| Conflict hints for fast log backtracking | `AppendEntriesResponse` | fields exist, used in Phase 4 |
+| Conflict hints for fast log backtracking | `RaftNode.nextIndexAfterRejection` | done, see ADR-0012 |
+| Batching and pipelining with an inflight window | `state.Progress`, `RaftConfig` | done |
 | Learners (*dissertation* §4.2.1) | `ClusterConfig` | modelled; promotion is Phase 12 |
 | Leadership transfer (*dissertation* §3.10) | `TimeoutNowRequest` | message exists, handled in Phase 12 |
 | ReadIndex (*dissertation* §6.4) | `ReadIndexRequest`, `ReadState` | messages exist, handled in Phase 11 |
