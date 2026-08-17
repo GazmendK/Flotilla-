@@ -56,3 +56,5 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0011](0011-commit-only-current-term-entries.md) | A leader commits only entries from its own term | Accepted |
 | [0012](0012-conflict-hints-for-log-backtracking.md) | Followers return conflict hints instead of being probed one entry at a time | Accepted |
 | [0013](0013-deterministic-simulation-testing.md) | Test consensus with deterministic simulation | Accepted |
+| [0014](0014-custom-write-ahead-log.md) | Write the log format instead of embedding a storage engine | Accepted |
+| [0015](0015-hardstate-double-buffering.md) | Store the hard state in two alternating slots | Accepted |

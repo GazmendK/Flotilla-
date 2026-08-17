@@ -131,6 +131,7 @@ Stated up front, because a bounded scope is a design decision:
 | [`docs/architecture.md`](docs/architecture.md) | The pure core, the `Ready` contract, the ports, and what is checked mechanically |
 | [`docs/raft-implementation.md`](docs/raft-implementation.md) | Every rule of Figure 2 mapped to a code location or to the phase that implements it |
 | [`docs/simulation.md`](docs/simulation.md) | How the simulation works, how to replay a seed, and what it provably does *not* catch |
+| [`docs/storage-format.md`](docs/storage-format.md) | The on-disk format, byte for byte, with a hexdump generated from the code |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | The layers, and the rule that every safeguard is tested with itself disabled |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |
 | [`ROADMAP.md`](ROADMAP.md) | The 15 development phases, and why they are ordered that way |

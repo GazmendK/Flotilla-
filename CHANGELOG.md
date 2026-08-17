@@ -12,6 +12,17 @@ not stable before 1.0.0.
 
 ### Added
 
+- A durable write-ahead log: segment files named after their first index, records framed with a
+  length and a CRC32C, and recovery by forward scan that truncates an unreadable tail instead of
+  refusing to start. The format is specified byte-exactly in `docs/storage-format.md`, with a
+  hexdump generated from the implementation.
+- Hard state stored in two alternating 128-byte slots selected by a generation counter, so a write
+  interrupted at any point leaves the previous state intact. No temp file, no rename, no directory
+  sync on the path taken by every election.
+- A `FileIo` port over the file system, so the fault-injecting layer can sit underneath it.
+- A shared `LogStore` contract test that runs unchanged against the in-memory and the durable
+  implementation, which is what makes the simulation's guarantees transfer to production.
+
 - Deterministic simulation testing: whole clusters run in one thread on virtual time over a
   network that drops, delays, duplicates, reorders and partitions, with crashes that discard every
   unsynced byte. Every run is a pure function of its seed.
