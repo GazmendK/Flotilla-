@@ -13,10 +13,10 @@
 
 ---
 
-> **Status: Phase 4 of 15 — log replication.**
-> A cluster elects a leader, replicates entries, commits them under the rule from §5.4.2, and
-> brings a diverged follower back into agreement. Everything still runs in memory; durability is
-> Phase 6. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
+> **Status: Phase 5 of 15 — deterministic simulation.**
+> Whole clusters now run on virtual time under partitions, message loss and crashes, with every
+> Raft safety property checked after each step and every failure reproducible from a seed.
+> Durability on real disks is Phase 6. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
 
@@ -52,12 +52,12 @@ This section is the point of the project. It will fill in as the phases land:
 
 | | Mechanism | Phase |
 |---|---|---|
-| ☐ | Deterministic simulation: virtual clock and network, partitions, crashes, seeded and reproducible | 5 |
-| ☐ | All five safety properties from Figure 3 of the Raft paper, checked after every step | 5 |
+| ☑ | Deterministic simulation: virtual clock and network, partitions, crashes, seeded and reproducible | 5 |
+| ☑ | All five safety properties from Figure 3 of the Raft paper, checked after every step | 5 |
 | ☑ | Figure 7 and Figure 8 of the paper encoded as test cases | 4 |
+| ☑ | Fault injection proving the checkers actually detect known-bad behaviour | 5 |
 | ☐ | Crash-consistency verified by injecting a crash at every physical write | 6 |
 | ☐ | A linearizability checker, run over real cluster histories | 11 |
-| ☐ | Fault injection proving the checkers actually detect known-bad behaviour | 5, 11 |
 | ☑ | Every safeguard tested with itself disabled, so it is known to fail without it | 3 |
 | ☑ | Determinism enforced as tests: the core cannot acquire I/O, threads, a clock or unseeded randomness | 2 |
 | ☑ | Static analysis as build failures: Error Prone, NullAway, `-Werror` | 1 |
@@ -107,7 +107,7 @@ exercises is the shipped consensus code, not a model of it.
 | 2. Domain model and ports | ☑ | 10. Snapshots and compaction | ☐ |
 | 3. Leader election | ☑ | 11. Linearizable reads and checker | ☐ |
 | 4. Log replication | ☑ | 12. Membership changes | ☐ |
-| 5. Deterministic simulation | ☐ | 13. Observability and visualizer | ☐ |
+| 5. Deterministic simulation | ☑ | 13. Observability and visualizer | ☐ |
 | 6. Persistence and recovery | ☐ | 14. CLI, packaging, demo | ☐ |
 | 7. Node runtime | ☐ | 15. Benchmarks and release | ☐ |
 | 8. KV state machine, sessions | ☐ | | |
@@ -130,6 +130,8 @@ Stated up front, because a bounded scope is a design decision:
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | The pure core, the `Ready` contract, the ports, and what is checked mechanically |
 | [`docs/raft-implementation.md`](docs/raft-implementation.md) | Every rule of Figure 2 mapped to a code location or to the phase that implements it |
+| [`docs/simulation.md`](docs/simulation.md) | How the simulation works, how to replay a seed, and what it provably does *not* catch |
+| [`docs/testing-strategy.md`](docs/testing-strategy.md) | The layers, and the rule that every safeguard is tested with itself disabled |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |
 | [`ROADMAP.md`](ROADMAP.md) | The 15 development phases, and why they are ordered that way |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, and what "done" means here |

@@ -17,7 +17,7 @@ phase inherits fault injection and invariant checking for free.
 | 2 | Domain model, message types, ports, enforced architecture rules | **done** |
 | 3 | Leader election, PreVote, CheckQuorum | **done** |
 | 4 | Log replication, commit rules, conflict backtracking | **done** |
-| 5 | Deterministic simulation and the five Raft safety invariants | planned |
+| 5 | Deterministic simulation and the five Raft safety invariants | **done** |
 | 6 | Segmented write-ahead log, stable store, crash recovery | planned |
 | 7 | Node runtime: single-writer event loop, group commit, backpressure | planned |
 | 8 | Key-value state machine, client sessions, exactly-once semantics | planned |

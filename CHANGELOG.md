@@ -12,6 +12,19 @@ not stable before 1.0.0.
 
 ### Added
 
+- Deterministic simulation testing: whole clusters run in one thread on virtual time over a
+  network that drops, delays, duplicates, reorders and partitions, with crashes that discard every
+  unsynced byte. Every run is a pure function of its seed.
+- All five safety properties from Figure 3 of the paper, plus applied-exactly-once-and-in-order
+  and monotonic progress, checked after every simulation step. The checkers are themselves tested
+  against hand-built worlds that violate each property.
+- An adversarial fault profile that replicates one entry per message. It exists because a measured
+  experiment showed the default profile is blind to commit-rule defects: an injected Figure 8 bug
+  survived 500 seeds under the default profile and was caught at seed 77 under this one. See
+  `docs/simulation.md`.
+- Nightly workflow running eight shards of fresh seeds, with failing runs uploaded as artifacts,
+  and `scripts/replay-seed` to reproduce any seed locally.
+
 - Log replication: per-peer progress tracking with probe and replicate phases, batching bounded by
   both entry count and payload size, and a bounded inflight window.
 - The commit rule of §5.4.2: a leader advances the commit index only onto entries of its own term,

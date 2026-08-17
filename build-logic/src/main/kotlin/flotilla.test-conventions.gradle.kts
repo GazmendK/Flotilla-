@@ -18,8 +18,19 @@ dependencies {
     testRuntimeOnly(libs.findLibrary("junit-platform-launcher").get())
 }
 
+val forwardedProperties = listOf(
+    "flotilla.sim.seed",
+    "flotilla.sim.seeds",
+    "flotilla.sim.ticks",
+    "flotilla.sim.offset",
+)
+
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+
+    forwardedProperties.forEach { key ->
+        providers.systemProperty(key).orNull?.let { systemProperty(key, it) }
+    }
 
     failOnNoDiscoveredTests = false
 

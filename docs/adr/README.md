@@ -55,3 +55,4 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0010](0010-state-pattern-for-roles.md) | Roles are types, not a field | Accepted |
 | [0011](0011-commit-only-current-term-entries.md) | A leader commits only entries from its own term | Accepted |
 | [0012](0012-conflict-hints-for-log-backtracking.md) | Followers return conflict hints instead of being probed one entry at a time | Accepted |
+| [0013](0013-deterministic-simulation-testing.md) | Test consensus with deterministic simulation | Accepted |

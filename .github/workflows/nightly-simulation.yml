@@ -1,0 +1,77 @@
+name: Nightly simulation
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds_per_shard:
+        description: Seeds to run in each shard
+        required: false
+        default: "2000"
+      ticks:
+        description: Ticks per simulated run
+        required: false
+        default: "1500"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    name: shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Run simulation shard
+        env:
+          SEEDS: ${{ github.event.inputs.seeds_per_shard || '2000' }}
+          TICKS: ${{ github.event.inputs.ticks || '1500' }}
+        run: |
+          OFFSET=$(( ${{ matrix.shard }} * SEEDS + $(date +%s) % 1000000 * 100000 ))
+          echo "Shard ${{ matrix.shard }}: seeds $((OFFSET + 1))..$((OFFSET + SEEDS))"
+          ./gradlew :flotilla-testing:test \
+            --tests '*RandomizedRaftTest*' \
+            --tests '*AdversarialTest*' \
+            -Dflotilla.sim.seeds="$SEEDS" \
+            -Dflotilla.sim.offset="$OFFSET" \
+            -Dflotilla.sim.ticks="$TICKS"
+
+      - name: Upload failing seeds
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failing-seeds-shard-${{ matrix.shard }}
+          path: flotilla-testing/build/reports/tests/test/
+          retention-days: 30
+          if-no-files-found: ignore
