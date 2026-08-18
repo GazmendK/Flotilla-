@@ -136,6 +136,16 @@ bytes is reported by the store so that operators, and tests, can see it rather t
 A gap **between** segments is different: it can only mean a segment file was lost, and no amount
 of truncation makes the log correct again. That is refused loudly.
 
+A segment file **shorter than its 24-byte header** is a third case, and not an error either. The
+header is written and synced before any entry is appended, so a file without a complete header
+provably contains no entries; it is the residue of a crash during segment creation. Such a file is
+deleted and the store continues. Treating it as corruption instead means a node that crashed at
+exactly the wrong microsecond can never start again — which is what the crash test found on its
+first run.
+
+A file **at least as long as the header** whose magic, version or header checksum does not match is
+corruption, and is refused.
+
 ### What this does not distinguish
 
 A checksum failure at the tail could be a torn write from a crash, or it could be a bad sector in

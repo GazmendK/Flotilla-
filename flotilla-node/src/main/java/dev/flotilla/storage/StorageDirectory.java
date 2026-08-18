@@ -30,12 +30,21 @@ public final class StorageDirectory {
 
         StorageDirectory storage = new StorageDirectory(io, directory);
         Path layout = directory.resolve(LAYOUT_FILE);
-        if (io.exists(layout)) {
+        if (storage.hasLayout(layout)) {
             storage.verifyLayout(layout);
         } else {
             storage.writeLayout(layout);
         }
         return storage;
+    }
+
+    private boolean hasLayout(Path layout) {
+        if (!io.exists(layout)) {
+            return false;
+        }
+        try (FileHandle handle = io.open(layout)) {
+            return handle.size() > 0;
+        }
     }
 
     private void verifyLayout(Path layout) {

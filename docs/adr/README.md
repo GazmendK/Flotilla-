@@ -58,3 +58,4 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0013](0013-deterministic-simulation-testing.md) | Test consensus with deterministic simulation | Accepted |
 | [0014](0014-custom-write-ahead-log.md) | Write the log format instead of embedding a storage engine | Accepted |
 | [0015](0015-hardstate-double-buffering.md) | Store the hard state in two alternating slots | Accepted |
+| [0016](0016-crash-at-every-write.md) | Prove durability by crashing at every write | Accepted |

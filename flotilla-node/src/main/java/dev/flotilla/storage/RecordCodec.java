@@ -14,6 +14,7 @@ public final class RecordCodec {
 
     public static final int FRAME_BYTES = 8;
     public static final int MAX_BODY_BYTES = 64 * 1024 * 1024;
+    public static final int MIN_BODY_BYTES = 1 + Long.BYTES + Long.BYTES + 1 + Integer.BYTES;
 
     private static final byte RECORD_LOG_ENTRY = 1;
     private static final byte ENTRY_NORMAL = 1;
@@ -51,6 +52,10 @@ public final class RecordCodec {
     }
 
     public static LogEntry decode(byte[] body, Object file, long offset) {
+        if (body.length < MIN_BODY_BYTES) {
+            throw CorruptionException.at(
+                    file, offset, "record body is " + body.length + " bytes, shorter than a log entry header");
+        }
         ByteBuffer buffer = ByteBuffer.wrap(body);
         byte recordType = buffer.get();
         if (recordType != RECORD_LOG_ENTRY) {

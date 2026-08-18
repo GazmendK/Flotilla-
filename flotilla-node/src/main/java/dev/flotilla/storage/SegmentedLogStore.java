@@ -22,6 +22,7 @@ public final class SegmentedLogStore implements LogStore, AutoCloseable {
     private final List<LogSegment> segments = new ArrayList<>();
 
     private long discardedBytesOnRecovery;
+    private int unfinishedSegments;
 
     private SegmentedLogStore(FileIo io, Path directory, StorageConfig config) {
         this.io = io;
@@ -40,7 +41,13 @@ public final class SegmentedLogStore implements LogStore, AutoCloseable {
     private void recover() {
         List<Path> files = io.listSorted(directory, LogSegment.SUFFIX);
         for (Path file : files) {
-            LogSegment segment = LogSegment.open(io, file);
+            Optional<LogSegment> opened = LogSegment.open(io, file);
+            if (opened.isEmpty()) {
+                unfinishedSegments++;
+                io.delete(file);
+                continue;
+            }
+            LogSegment segment = opened.get();
             discardedBytesOnRecovery += segment.discardedBytes();
             if (!segments.isEmpty()) {
                 LogSegment previous = segments.getLast();
@@ -63,6 +70,10 @@ public final class SegmentedLogStore implements LogStore, AutoCloseable {
 
     public long discardedBytesOnRecovery() {
         return discardedBytesOnRecovery;
+    }
+
+    public int unfinishedSegmentsOnRecovery() {
+        return unfinishedSegments;
     }
 
     public int segmentCount() {

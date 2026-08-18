@@ -12,6 +12,20 @@ not stable before 1.0.0.
 
 ### Added
 
+- Crash consistency proven by exhaustion rather than argued: a fault-injecting file layer crashes
+  the workload at every single physical write, and recovery must always yield a prefix of what was
+  written with no acknowledged entry missing. The same is done for torn writes, for a full disk,
+  and for the hard state.
+- Property-based fuzzing of the record decoder: arbitrary bytes may only ever produce a
+  `CorruptionException`, a corrupted length is always bounded before anything is allocated, and any
+  single-byte mutation of a valid record is detected.
+
+### Fixed
+
+- A crash during segment creation left a file without a complete header, which recovery treated as
+  corruption and refused to start on. A segment without a header provably holds no entries, so it
+  is now discarded and the store continues. Found by the crash test on its first run.
+
 - A durable write-ahead log: segment files named after their first index, records framed with a
   length and a CRC32C, and recovery by forward scan that truncates an unreadable tail instead of
   refusing to start. The format is specified byte-exactly in `docs/storage-format.md`, with a

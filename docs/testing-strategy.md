@@ -13,7 +13,8 @@ page is what that means concretely.
 | Architecture tests | Are the structural guarantees still true? | `CoreArchitectureTest`, `NodeLayeringTest`, `SimulationIsolationTest` |
 | Deterministic simulation | Does safety hold under adversarial schedules nobody wrote down? | `flotilla-testing` |
 | Checker tests | Do the checkers themselves detect the thing they claim to detect? | `InvariantTest` |
-| Crash-consistency tests | Does durability survive a crash at every write point? | Phase 6 |
+| Crash-consistency tests | Does durability survive a crash at every write point? | `CrashConsistencyTest` |
+| Fuzzing | Does the decoder survive arbitrary bytes without allocating or throwing wildly? | `RecordCodecFuzzTest` |
 | Linearizability checking | Is the observable history actually linearizable? | Phase 11 |
 | Integration tests | Does it work with real processes, sockets and files? | Phase 9 |
 
@@ -30,6 +31,7 @@ mechanism nobody can trust.
 | Conflict hints | `ConflictBacktrackingTest` bounds the number of round trips; plain decrementing would need a thousand |
 | Architecture rules | Adding `System.nanoTime()` to the core makes `CoreArchitectureTest` fail with the reason attached |
 | Invariant checkers | `InvariantTest` builds a violating world for each and asserts it fires |
+| Crash recovery | `CrashConsistencyTest` crashes at every physical write; it found a segment-creation bug that bricked recovery |
 
 ## What runs when
 

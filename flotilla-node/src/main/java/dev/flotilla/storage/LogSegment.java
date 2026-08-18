@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.zip.CRC32C;
 
 final class LogSegment implements AutoCloseable {
@@ -46,12 +47,12 @@ final class LogSegment implements AutoCloseable {
         return new LogSegment(handle, firstIndex);
     }
 
-    static LogSegment open(FileIo io, Path path) {
+    static Optional<LogSegment> open(FileIo io, Path path) {
         FileHandle handle = io.open(path);
         byte[] header = new byte[HEADER_BYTES];
         if (handle.readAt(0, header) < HEADER_BYTES) {
             handle.close();
-            throw CorruptionException.at(path, 0, "segment is shorter than its header");
+            return Optional.empty();
         }
         ByteBuffer buffer = ByteBuffer.wrap(header);
         if (buffer.getLong() != MAGIC) {
@@ -71,7 +72,7 @@ final class LogSegment implements AutoCloseable {
 
         LogSegment segment = new LogSegment(handle, firstIndex);
         segment.scan();
-        return segment;
+        return Optional.of(segment);
     }
 
     private void scan() {
