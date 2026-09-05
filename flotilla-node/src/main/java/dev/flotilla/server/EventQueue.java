@@ -5,6 +5,7 @@
 package dev.flotilla.server;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -34,8 +35,16 @@ public final class EventQueue {
         }
     }
 
+    public boolean offerShutdown(NodeEvent event) {
+        return queue.offer(event);
+    }
+
     public boolean offerInbound(NodeEvent event) {
         return queue.offer(event);
+    }
+
+    public int drainTo(Collection<NodeEvent> target, int max) {
+        return queue.drainTo(target, max);
     }
 
     public List<NodeEvent> drain() {

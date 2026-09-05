@@ -60,3 +60,4 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0015](0015-hardstate-double-buffering.md) | Store the hard state in two alternating slots | Accepted |
 | [0016](0016-crash-at-every-write.md) | Prove durability by crashing at every write | Accepted |
 | [0017](0017-single-writer-event-loop.md) | One thread owns the Raft state | Accepted |
+| [0018](0018-apply-off-the-loop-fsync-on-it.md) | Apply moves off the event loop; the log does not | Accepted |

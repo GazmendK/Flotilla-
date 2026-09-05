@@ -27,16 +27,20 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 
 public final class RaftServer implements AutoCloseable {
 
-    private static final long LEADERSHIP_POLL_MILLIS = 5;
+    private static final long POLL_MILLIS = 5;
 
     private final NodeId id;
     private final ServerConfig config;
     private final EventQueue events;
     private final RaftEngine engine;
+    private final ApplyLoop apply;
+    private final ProposalRegistry proposals;
     private final Thread engineThread;
+    private final Thread applyThread;
     private final ScheduledExecutorService ticker;
     private final ScheduledFuture<?> tickerTask;
     private final SegmentedLogStore log;
@@ -48,7 +52,10 @@ public final class RaftServer implements AutoCloseable {
             ServerConfig config,
             EventQueue events,
             RaftEngine engine,
+            ApplyLoop apply,
+            ProposalRegistry proposals,
             Thread engineThread,
+            Thread applyThread,
             ScheduledExecutorService ticker,
             ScheduledFuture<?> tickerTask,
             SegmentedLogStore log,
@@ -57,7 +64,10 @@ public final class RaftServer implements AutoCloseable {
         this.config = config;
         this.events = events;
         this.engine = engine;
+        this.apply = apply;
+        this.proposals = proposals;
         this.engineThread = engineThread;
+        this.applyThread = applyThread;
         this.ticker = ticker;
         this.tickerTask = tickerTask;
         this.log = log;
@@ -87,10 +97,16 @@ public final class RaftServer implements AutoCloseable {
         long seed = System.nanoTime() ^ ((long) id.value().hashCode() << 32);
         RaftNode raft = new RaftNode(raftConfig, cluster, log, RandomSource.seeded(seed), persisted);
 
-        EventQueue events = new EventQueue(serverConfig.eventQueueCapacity());
-        RaftEngine engine = new RaftEngine(raft, log, stable, stateMachine, sink, events);
-        engine.replayThrough(persisted.commitIndex());
+        ProposalRegistry proposals = new ProposalRegistry();
+        ApplyLoop apply = new ApplyLoop(stateMachine, proposals, serverConfig.applyQueueCapacity());
+        apply.replayThrough(log, persisted.commitIndex());
 
+        EventQueue events = new EventQueue(serverConfig.eventQueueCapacity());
+        RaftEngine engine =
+                new RaftEngine(raft, log, stable, sink, events, apply, proposals, serverConfig.maxBatchSize());
+
+        Thread applyThread = new Thread(apply, "flotilla-" + id + "-apply");
+        applyThread.start();
         Thread engineThread = new Thread(engine, "flotilla-" + id + "-eventloop");
         engineThread.start();
 
@@ -103,7 +119,19 @@ public final class RaftServer implements AutoCloseable {
         ScheduledFuture<?> tickerTask = ticker.scheduleWithFixedDelay(
                 () -> events.offerTick(new NodeEvent.Tick()), tickMillis, tickMillis, TimeUnit.MILLISECONDS);
 
-        return new RaftServer(id, serverConfig, events, engine, engineThread, ticker, tickerTask, log, stable);
+        return new RaftServer(
+                id,
+                serverConfig,
+                events,
+                engine,
+                apply,
+                proposals,
+                engineThread,
+                applyThread,
+                ticker,
+                tickerTask,
+                log,
+                stable);
     }
 
     public NodeId id() {
@@ -123,11 +151,31 @@ public final class RaftServer implements AutoCloseable {
     }
 
     public long appliedIndex() {
-        return engine.appliedIndex();
+        return apply.appliedIndex();
+    }
+
+    public long applyBacklog() {
+        return apply.backlog();
     }
 
     public int pendingProposals() {
-        return engine.pendingProposals();
+        return proposals.size();
+    }
+
+    public long syncs() {
+        return engine.syncs();
+    }
+
+    public long persistedEntries() {
+        return engine.persistedEntries();
+    }
+
+    public long batches() {
+        return engine.batches();
+    }
+
+    public int largestBatch() {
+        return engine.largestBatch();
     }
 
     public EventQueue events() {
@@ -135,7 +183,7 @@ public final class RaftServer implements AutoCloseable {
     }
 
     public Optional<RuntimeException> failure() {
-        return engine.failure();
+        return engine.failure().or(apply::failure);
     }
 
     public CompletableFuture<Long> propose(Bytes command) {
@@ -160,22 +208,11 @@ public final class RaftServer implements AutoCloseable {
     }
 
     public boolean awaitLeadership(Duration timeout) {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            if (engine.isLeader()) {
-                return true;
-            }
-            if (!engine.isRunning()) {
-                return false;
-            }
-            try {
-                Thread.sleep(LEADERSHIP_POLL_MILLIS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
-        }
-        return engine.isLeader();
+        return awaitCondition(timeout, engine::isLeader);
+    }
+
+    public boolean awaitApplied(long index, Duration timeout) {
+        return awaitCondition(timeout, () -> apply.appliedIndex() >= index);
     }
 
     @Override
@@ -186,14 +223,48 @@ public final class RaftServer implements AutoCloseable {
         tickerTask.cancel(false);
         ticker.shutdownNow();
         engine.stop();
-        engineThread.interrupt();
-        try {
-            engineThread.join(config.shutdownTimeout().toMillis());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        }
+        events.offerShutdown(new NodeEvent.Shutdown());
+        join(engineThread);
+        forceStop(engineThread);
+        apply.stop();
+        join(applyThread);
+        forceStop(applyThread);
+        proposals.failAll(null);
         RaftEngine.failQueuedProposals(events);
         stable.close();
         log.close();
+    }
+
+    private static void forceStop(Thread thread) {
+        if (thread.isAlive()) {
+            thread.interrupt();
+        }
+    }
+
+    private void join(Thread thread) {
+        try {
+            thread.join(config.shutdownTimeout().toMillis());
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private boolean awaitCondition(Duration timeout, BooleanSupplier condition) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            if (!engine.isRunning()) {
+                return condition.getAsBoolean();
+            }
+            try {
+                Thread.sleep(POLL_MILLIS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return condition.getAsBoolean();
     }
 }

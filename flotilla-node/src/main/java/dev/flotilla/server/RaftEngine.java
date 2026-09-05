@@ -4,17 +4,19 @@
  */
 package dev.flotilla.server;
 
-import dev.flotilla.core.EntryType;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.RaftNode;
 import dev.flotilla.core.RaftRole;
 import dev.flotilla.core.Ready;
 import dev.flotilla.core.SoftState;
 import dev.flotilla.core.port.StableStore;
-import dev.flotilla.kv.StateMachine;
 import dev.flotilla.storage.DurableLogStore;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.jspecify.annotations.Nullable;
 
 final class RaftEngine implements Runnable {
@@ -22,56 +24,58 @@ final class RaftEngine implements Runnable {
     private final RaftNode raft;
     private final DurableLogStore log;
     private final StableStore stable;
-    private final StateMachine stateMachine;
     private final MessageSink sink;
     private final EventQueue events;
-    private final ProposalRegistry proposals = new ProposalRegistry();
+    private final ApplyLoop apply;
+    private final ProposalRegistry proposals;
+    private final int maxBatchSize;
+    private final List<NodeEvent> batch = new ArrayList<>();
 
     private volatile boolean running = true;
     private volatile boolean leader;
     private volatile long publishedTerm;
     private volatile long publishedCommitIndex;
-    private volatile long publishedAppliedIndex;
+    private final AtomicLong syncs = new AtomicLong();
+    private final AtomicLong persistedEntries = new AtomicLong();
+    private final AtomicLong batches = new AtomicLong();
+    private final AtomicInteger largestBatch = new AtomicInteger();
 
     @Nullable
     private volatile RuntimeException failure;
-
-    private long lastApplied;
 
     RaftEngine(
             RaftNode raft,
             DurableLogStore log,
             StableStore stable,
-            StateMachine stateMachine,
             MessageSink sink,
-            EventQueue events) {
+            EventQueue events,
+            ApplyLoop apply,
+            ProposalRegistry proposals,
+            int maxBatchSize) {
         this.raft = Objects.requireNonNull(raft, "raft");
         this.log = Objects.requireNonNull(log, "log");
         this.stable = Objects.requireNonNull(stable, "stable");
-        this.stateMachine = Objects.requireNonNull(stateMachine, "stateMachine");
         this.sink = Objects.requireNonNull(sink, "sink");
         this.events = Objects.requireNonNull(events, "events");
+        this.apply = Objects.requireNonNull(apply, "apply");
+        this.proposals = Objects.requireNonNull(proposals, "proposals");
+        this.maxBatchSize = maxBatchSize;
         this.publishedTerm = raft.currentTerm();
         this.publishedCommitIndex = raft.commitIndex();
-    }
-
-    void replayThrough(long throughIndex) {
-        for (long index = Math.max(1, log.firstIndex()); index <= throughIndex; index++) {
-            Optional<LogEntry> entry = log.entryAt(index);
-            if (entry.isPresent() && entry.get().type() == EntryType.NORMAL) {
-                stateMachine.apply(index, entry.get().data());
-            }
-        }
-        lastApplied = Math.max(lastApplied, throughIndex);
-        publishedAppliedIndex = lastApplied;
     }
 
     @Override
     public void run() {
         try {
             while (running) {
-                NodeEvent event = events.take();
-                handle(event);
+                batch.clear();
+                batch.add(events.take());
+                events.drainTo(batch, maxBatchSize - 1);
+                batches.incrementAndGet();
+                largestBatch.accumulateAndGet(batch.size(), Math::max);
+                for (NodeEvent event : batch) {
+                    handle(event);
+                }
                 processReady();
             }
         } catch (InterruptedException interrupted) {
@@ -81,17 +85,21 @@ final class RaftEngine implements Runnable {
         } finally {
             running = false;
             leader = false;
-            proposals.failAll(null);
+            failPending(batch);
             failQueuedProposals(events);
         }
     }
 
     static void failQueuedProposals(EventQueue events) {
-        for (NodeEvent event : events.drain()) {
+        failPending(events.drain());
+    }
+
+    private static void failPending(List<NodeEvent> events) {
+        for (NodeEvent event : events) {
             if (event instanceof NodeEvent.Proposal proposal) {
                 proposal.result()
-                        .completeExceptionally(new IllegalStateException(
-                                "the server shut down before this proposal reached the event loop"));
+                        .completeExceptionally(
+                                new IllegalStateException("the server stopped before this proposal was accepted"));
             }
         }
     }
@@ -116,12 +124,20 @@ final class RaftEngine implements Runnable {
         return publishedCommitIndex;
     }
 
-    long appliedIndex() {
-        return publishedAppliedIndex;
+    long syncs() {
+        return syncs.get();
     }
 
-    int pendingProposals() {
-        return proposals.size();
+    long persistedEntries() {
+        return persistedEntries.get();
+    }
+
+    long batches() {
+        return batches.get();
+    }
+
+    int largestBatch() {
+        return largestBatch.get();
     }
 
     Optional<RuntimeException> failure() {
@@ -153,34 +169,26 @@ final class RaftEngine implements Runnable {
         proposals.register(term, index, proposal.result());
     }
 
-    private void processReady() {
+    private void processReady() throws InterruptedException {
         Ready ready = raft.ready();
-        if (!ready.isEmpty()) {
-            if (ready.requiresSync()) {
-                ready.hardState().ifPresent(stable::persist);
-                log.sync();
-            }
-            ready.messagesToSend().forEach(sink::send);
-            for (LogEntry entry : ready.committedEntriesToApply()) {
-                applyEntry(entry);
-            }
-            ready.softState().ifPresent(this::publishSoftState);
-            raft.advance();
-        }
-        publishedTerm = raft.currentTerm();
-        publishedCommitIndex = raft.commitIndex();
-        publishedAppliedIndex = lastApplied;
-    }
-
-    private void applyEntry(LogEntry entry) {
-        if (entry.index() <= lastApplied) {
+        if (ready.isEmpty()) {
             return;
         }
-        if (entry.type() == EntryType.NORMAL) {
-            stateMachine.apply(entry.index(), entry.data());
+        if (ready.requiresSync()) {
+            ready.hardState().ifPresent(stable::persist);
+            log.sync();
+            syncs.incrementAndGet();
+            persistedEntries.addAndGet(ready.entriesToPersist().size());
         }
-        lastApplied = entry.index();
-        proposals.completeApplied(entry.index(), entry.term());
+        for (var message : ready.messagesToSend()) {
+            sink.send(message);
+        }
+        List<LogEntry> committed = ready.committedEntriesToApply();
+        ready.softState().ifPresent(this::publishSoftState);
+        raft.advance();
+        publishedTerm = raft.currentTerm();
+        publishedCommitIndex = raft.commitIndex();
+        apply.submit(committed);
     }
 
     private void publishSoftState(SoftState state) {

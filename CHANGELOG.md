@@ -12,6 +12,15 @@ not stable before 1.0.0.
 
 ### Added
 
+- Group commit: the event loop drains a batch of events before producing one `Ready`, so a burst of
+  proposals shares a single `fsync`. Measured at 33 syncs for 2001 entries, and a test with the
+  batch size pinned to one shows the same workload otherwise paying one `fsync` per entry.
+- Applying committed entries moved to its own thread, so a state machine that blocks no longer stops
+  consensus. The commit index keeps advancing while the applied index stalls, and backpressure
+  reaches the client instead of accumulating in the node.
+- `docs/threading-model.md`: which work runs on which thread, why the log deliberately stays on the
+  event loop, and the overflow policy of every queue.
+
 - A running node: one thread owns the Raft state, every input arrives as an event on a bounded
   queue, and no lock exists anywhere in the node. Callers read published `volatile` state and
   never touch the core.
@@ -35,6 +44,14 @@ not stable before 1.0.0.
   single-byte mutation of a valid record is detected.
 
 ### Fixed
+
+- Stopping the event loop by interrupting its thread destroyed the write-ahead log. `FileChannel`
+  is an `InterruptibleChannel`, so an interrupt during a write closes the channel for good and the
+  node died with `Cannot write to ....wal`. Shutdown now posts a `Shutdown` event and interrupts
+  only as a last resort.
+- A proposal in a batch already drained from the event queue was lost if anything threw while the
+  batch was being handled: it was neither in the queue nor in the registry, so nothing could ever
+  complete its future. The in-flight batch is now failed on the way out.
 
 - A crash during segment creation left a file without a complete header, which recovery treated as
   corruption and refused to start on. A segment without a header provably holds no entries, so it

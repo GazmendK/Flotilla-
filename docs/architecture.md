@@ -119,7 +119,8 @@ One thread owns `RaftNode`. Everything else hands it work through a bounded queu
   network ─┤    (bounded)          │
            │                       ├──► StableStore.persist + LogStore.sync
   clients ─┘                       ├──► MessageSink.send
-                                   ├──► StateMachine.apply
+                                   ├──► ApplyQueue ──► apply loop ──► StateMachine
+                                   │     (bounded)                    + futures
                                    └──► published volatile state ──► callers
 ```
 
@@ -128,28 +129,30 @@ contract demands, and calls `advance()`. Because it is the only caller, the core
 synchronization at all — the absence of locks is a property of the design, not an optimization.
 
 Callers never dereference `RaftNode`. `isLeader()`, `currentTerm()`, `commitIndex()` and
-`appliedIndex()` read `volatile` fields the loop publishes after each `Ready`. The rule is checkable
-by looking at a field declaration rather than by reasoning about interleavings.
+`appliedIndex()` read `volatile` fields the two loops publish. The rule is checkable by looking at a
+field declaration rather than by reasoning about interleavings.
 
-Every queue is bounded, and each event type states what happens when it is full:
+Persistence stays on the loop; applying committed entries does not. A second thread owns the state
+machine and completes proposal futures, so a stuck state machine can no longer stop consensus. The
+`fsync` cost is handled by batching rather than by a third thread — the loop drains up to
+`maxBatchSize` events before producing one `Ready`, which measured 33 `fsync` calls for 2001
+entries.
 
-| Event | Overflow policy | Why |
+Every queue is bounded, and each kind of work states what happens when its queue is full:
+
+| Work | Overflow policy | Why |
 |---|---|---|
 | Proposal | rejected with `BackpressureException`, counted | The caller learns now; a growing queue would only delay the same answer |
 | Tick | dropped, counted | A full queue means the loop is busy, and the next tick is already scheduled |
 | Inbound message | dropped | The protocol already assumes a lossy network; the sender retries |
+| Committed entries | blocks the event loop | Applying a committed entry is not optional; dropping one breaks State Machine Safety |
 
 A proposal's future completes when its entry is **applied**, and only if that index still carries
 the term it was proposed in. An index that a later leader overwrote fails the caller rather than
 reporting a commit that never happened.
 
-Shutdown is part of the contract. The ticker is cancelled, the loop is asked to stop and joined
-with a timeout, every registered future is failed, every proposal still in the queue is failed,
-and only then are the stable store and the log closed.
-
-Still on the loop, and the subject of the next change: persistence and state machine application.
-A slow `fsync` currently stalls tick processing, and a blocked state machine stops the node from
-accepting proposals — which is exactly what the backpressure test provokes on purpose.
+Why the log cannot simply move to its own thread, what shutdown must avoid, and the measured group
+commit numbers are in [threading-model.md](threading-model.md).
 
 ## Further reading
 

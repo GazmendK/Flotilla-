@@ -13,10 +13,11 @@
 
 ---
 
-> **Status: Phase 7 of 15 — the node runtime.**
-> Consensus and storage are now joined by a running node: a single-writer event loop that owns the
-> Raft state outright, a bounded queue that rejects overload instead of hiding it, and a restart
-> that replays the log back into the state machine. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
+> **Status: Phase 7 of 15 done — the node runtime.**
+> Consensus and storage are joined by a running node: one thread owns the Raft state, a burst of
+> proposals shares a single `fsync` (33 syncs for 2001 entries), a stuck state machine can no longer
+> stall consensus, and overload is rejected rather than buffered. The replicated key-value store on
+> top is Phase 8. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
 
@@ -132,6 +133,7 @@ Stated up front, because a bounded scope is a design decision:
 | [`docs/raft-implementation.md`](docs/raft-implementation.md) | Every rule of Figure 2 mapped to a code location or to the phase that implements it |
 | [`docs/simulation.md`](docs/simulation.md) | How the simulation works, how to replay a seed, and what it provably does *not* catch |
 | [`docs/storage-format.md`](docs/storage-format.md) | The on-disk format, byte for byte, with a hexdump generated from the code |
+| [`docs/threading-model.md`](docs/threading-model.md) | Which work runs on which thread, every queue overflow policy, and the measured group commit numbers |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | The layers, and the rule that every safeguard is tested with itself disabled |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |
 | [`ROADMAP.md`](ROADMAP.md) | The 15 development phases, and why they are ordered that way |

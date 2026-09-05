@@ -106,6 +106,24 @@ class ServerLifecycleTest {
     }
 
     @Test
+    @DisplayName("stopping the loop must not interrupt the thread that owns the log files")
+    void shutdownDoesNotBreakTheWriter() {
+        RaftServer server = start();
+        assertThat(server.awaitLeadership(PATIENCE)).isTrue();
+
+        List<CompletableFuture<Long>> submitted = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            submitted.add(server.propose(Bytes.ofUtf8("v" + i)));
+        }
+        server.close();
+
+        assertThat(submitted).allMatch(CompletableFuture::isDone);
+        assertThat(server.failure())
+                .as("a FileChannel is an InterruptibleChannel: interrupting its writer closes it for good")
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("the event loop reports a failure rather than dying silently")
     void aHealthyServerReportsNoFailure() {
         try (RaftServer server = start()) {

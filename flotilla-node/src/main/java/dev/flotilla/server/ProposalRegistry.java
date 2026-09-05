@@ -7,14 +7,14 @@ package dev.flotilla.server;
 import dev.flotilla.core.NodeId;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.SortedMap;
-import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import org.jspecify.annotations.Nullable;
 
 final class ProposalRegistry {
 
-    private final SortedMap<Long, Pending> pending = new TreeMap<>();
+    private final ConcurrentNavigableMap<Long, Pending> pending = new ConcurrentSkipListMap<>();
 
     void register(long term, long index, CompletableFuture<Long> result) {
         Pending replaced = pending.put(index, new Pending(term, result));
@@ -36,8 +36,13 @@ final class ProposalRegistry {
     }
 
     void failAll(@Nullable NodeId leader) {
-        List<Pending> waiting = new ArrayList<>(pending.values());
-        pending.clear();
+        List<Pending> waiting = new ArrayList<>();
+        for (Long index : pending.keySet()) {
+            Pending removed = pending.remove(index);
+            if (removed != null) {
+                waiting.add(removed);
+            }
+        }
         waiting.forEach(entry -> entry.result().completeExceptionally(new NotLeaderException(leader)));
     }
 
