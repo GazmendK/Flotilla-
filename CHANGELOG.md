@@ -12,6 +12,20 @@ not stable before 1.0.0.
 
 ### Added
 
+- A running node: one thread owns the Raft state, every input arrives as an event on a bounded
+  queue, and no lock exists anywhere in the node. Callers read published `volatile` state and
+  never touch the core.
+- Overload is answered rather than absorbed. A proposal that does not fit is rejected with a
+  `BackpressureException` naming the capacity it hit; a tick that does not fit is dropped and
+  counted, because the next one is already on its way.
+- A proposal is completed when its entry is applied, and only if the index still carries the term
+  it was proposed in — an index a later leader overwrote fails the caller instead of reporting a
+  commit that never happened.
+- Restart replays the log into the state machine before the loop starts, so a fresh process reaches
+  the state of the one it replaced.
+- Shutdown fails every future it can no longer honour, registered or still queued, and joins the
+  event loop before closing the log. No caller is left waiting on a future nothing will complete.
+
 - Crash consistency proven by exhaustion rather than argued: a fault-injecting file layer crashes
   the workload at every single physical write, and recovery must always yield a prefix of what was
   written with no acknowledged entry missing. The same is done for torn writes, for a full disk,

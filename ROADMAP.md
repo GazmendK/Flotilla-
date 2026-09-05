@@ -19,7 +19,7 @@ phase inherits fault injection and invariant checking for free.
 | 4 | Log replication, commit rules, conflict backtracking | **done** |
 | 5 | Deterministic simulation and the five Raft safety invariants | **done** |
 | 6 | Segmented write-ahead log, stable store, crash recovery | **done** |
-| 7 | Node runtime: single-writer event loop, group commit, backpressure | planned |
+| 7 | Node runtime: single-writer event loop, group commit, backpressure | in progress |
 | 8 | Key-value state machine, client sessions, exactly-once semantics | planned |
 | 9 | gRPC transport, client library, real multi-process cluster | planned |
 | 10 | Snapshotting, log compaction, streamed InstallSnapshot | planned |

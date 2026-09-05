@@ -109,15 +109,47 @@ The hash-ordered-collection rule is the least obvious and the most valuable: `Se
 order makes two runs of the same seed diverge, and the resulting bug reproduces on nobody's
 machine.
 
-## Thread model (phase 7)
+## Thread model
 
-Not yet implemented. The intent, recorded here because the `Ready` design depends on it:
+One thread owns `RaftNode`. Everything else hands it work through a bounded queue.
 
-- one **event loop** thread owns the core exclusively and consumes a bounded queue, so the core
-  needs no locks;
-- a **storage writer** batches appends into a single fsync per batch (group commit);
-- an **apply loop** applies committed entries, so a slow state machine cannot stall replication;
-- every queue is bounded and has an explicit overflow policy.
+```
+  ticker ──┐
+           ├──► EventQueue ──► event loop ──► RaftNode.step / tick / propose
+  network ─┤    (bounded)          │
+           │                       ├──► StableStore.persist + LogStore.sync
+  clients ─┘                       ├──► MessageSink.send
+                                   ├──► StateMachine.apply
+                                   └──► published volatile state ──► callers
+```
+
+The loop takes one `NodeEvent`, steps the core, drains the resulting `Ready` in the order the
+contract demands, and calls `advance()`. Because it is the only caller, the core needs no
+synchronization at all — the absence of locks is a property of the design, not an optimization.
+
+Callers never dereference `RaftNode`. `isLeader()`, `currentTerm()`, `commitIndex()` and
+`appliedIndex()` read `volatile` fields the loop publishes after each `Ready`. The rule is checkable
+by looking at a field declaration rather than by reasoning about interleavings.
+
+Every queue is bounded, and each event type states what happens when it is full:
+
+| Event | Overflow policy | Why |
+|---|---|---|
+| Proposal | rejected with `BackpressureException`, counted | The caller learns now; a growing queue would only delay the same answer |
+| Tick | dropped, counted | A full queue means the loop is busy, and the next tick is already scheduled |
+| Inbound message | dropped | The protocol already assumes a lossy network; the sender retries |
+
+A proposal's future completes when its entry is **applied**, and only if that index still carries
+the term it was proposed in. An index that a later leader overwrote fails the caller rather than
+reporting a commit that never happened.
+
+Shutdown is part of the contract. The ticker is cancelled, the loop is asked to stop and joined
+with a timeout, every registered future is failed, every proposal still in the queue is failed,
+and only then are the stable store and the log closed.
+
+Still on the loop, and the subject of the next change: persistence and state machine application.
+A slow `fsync` currently stalls tick processing, and a blocked state machine stops the node from
+accepting proposals — which is exactly what the backpressure test provokes on purpose.
 
 ## Further reading
 

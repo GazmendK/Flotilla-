@@ -13,10 +13,10 @@
 
 ---
 
-> **Status: Phase 6 of 15 — durability.**
-> The log now lives on disk in a documented, checksummed format, and recovery is verified by
-> crashing at every single physical write. The runtime that ties consensus and storage together
-> is Phase 7. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
+> **Status: Phase 7 of 15 — the node runtime.**
+> Consensus and storage are now joined by a running node: a single-writer event loop that owns the
+> Raft state outright, a bounded queue that rejects overload instead of hiding it, and a restart
+> that replays the log back into the state machine. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
 

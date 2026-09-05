@@ -6,7 +6,6 @@ package dev.flotilla.storage;
 
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.port.LogCompactedException;
-import dev.flotilla.core.port.LogStore;
 import dev.flotilla.storage.io.FileIo;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -14,7 +13,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-public final class SegmentedLogStore implements LogStore, AutoCloseable {
+public final class SegmentedLogStore implements DurableLogStore {
 
     private final FileIo io;
     private final Path directory;
@@ -191,6 +190,7 @@ public final class SegmentedLogStore implements LogStore, AutoCloseable {
         io.syncDirectory(directory);
     }
 
+    @Override
     public void sync() {
         segments.getLast().sync();
     }
