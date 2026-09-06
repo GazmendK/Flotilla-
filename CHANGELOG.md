@@ -12,6 +12,20 @@ not stable before 1.0.0.
 
 ### Added
 
+- A deterministic key-value state machine: an ordered map with put, delete, get, compare-and-swap
+  and half-open range scans. Compare-and-swap covers create-if-absent and delete-if-equal, which is
+  what a lock on top of the store is built from.
+- Commands, responses and snapshots have a hand-written canonical encoding, so `flotilla-node`
+  keeps its zero runtime dependencies and two replicas that reached the same state produce
+  byte-identical snapshots. Decoding is total: arbitrary bytes yield a `MalformedCommandException`
+  and never a buffer error or an allocation from a hostile length.
+- `DeterminismTest` holds the property that matters in practice — a replica that restored a
+  snapshot and caught up must match one that replayed the whole log. Substituting a `HashMap` for
+  the ordered map makes three of its four cases fail.
+- A model-based property test running random command sequences against a reference map, and a
+  `StateMachine` port widened with `snapshot`, `restore` and `lastAppliedIndex` so a different
+  machine — a counter, a queue, a lock service — can be dropped in.
+
 - Group commit: the event loop drains a batch of events before producing one `Ready`, so a burst of
   proposals shares a single `fsync`. Measured at 33 syncs for 2001 entries, and a test with the
   batch size pinned to one shows the same workload otherwise paying one `fsync` per entry.

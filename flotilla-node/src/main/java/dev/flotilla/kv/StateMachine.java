@@ -8,9 +8,36 @@ import dev.flotilla.core.Bytes;
 
 public interface StateMachine {
 
-    void apply(long index, Bytes command);
+    Bytes apply(long index, Bytes command);
+
+    Bytes snapshot();
+
+    void restore(Bytes snapshot);
+
+    long lastAppliedIndex();
 
     static StateMachine discarding() {
-        return (index, command) -> {};
+        return new StateMachine() {
+            private long lastApplied;
+
+            @Override
+            public Bytes apply(long index, Bytes command) {
+                lastApplied = index;
+                return Bytes.EMPTY;
+            }
+
+            @Override
+            public Bytes snapshot() {
+                return Bytes.EMPTY;
+            }
+
+            @Override
+            public void restore(Bytes snapshot) {}
+
+            @Override
+            public long lastAppliedIndex() {
+                return lastApplied;
+            }
+        };
     }
 }
