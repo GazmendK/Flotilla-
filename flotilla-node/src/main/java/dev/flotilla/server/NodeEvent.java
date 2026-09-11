@@ -14,7 +14,7 @@ public sealed interface NodeEvent {
 
     record Inbound(RaftMessage message) implements NodeEvent {}
 
-    record Proposal(Bytes command, CompletableFuture<Long> result) implements NodeEvent {}
+    record Proposal(Bytes command, CompletableFuture<Applied> result) implements NodeEvent {}
 
     record Shutdown() implements NodeEvent {}
 }

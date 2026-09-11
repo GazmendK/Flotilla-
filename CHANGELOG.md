@@ -12,6 +12,25 @@ not stable before 1.0.0.
 
 ### Added
 
+- Exactly-once execution through client sessions (thesis §6.3). A client registers once and numbers
+  its requests; the state machine caches the last response per client, so a retry after a lost
+  acknowledgement returns the stored answer instead of running again. Without it a Raft store is
+  only at-least-once — a retried compare-and-swap re-executes, sees its own earlier write, and
+  reports failure to the caller that actually succeeded.
+- A client id is the log index of its registration, so every replica derives the same one with no
+  coordination and a restored snapshot yields the same ids again.
+- Sessions expire after a number of **log entries**, never after wall-clock time. A replica applies
+  an entry whenever it gets there, so expiry measured against a local clock would make replicas
+  disagree about whether a session exists — that is the replicated state itself diverging.
+- The session table, the cached responses and the applied index are part of the snapshot. Removing
+  the sessions from the encoder makes two tests fail; removing the response cache makes six fail,
+  including both end-to-end cases through `RaftServer`.
+- `RaftServer.execute` returns the state machine's response, alongside `propose`, which still
+  reports the index.
+- `docs/consistency-model.md` states what is guaranteed and what is not — no multi-key atomicity, no
+  snapshot isolation, no cross-session causality — and where exactly-once ends: an expired session
+  is answered with an explicit refusal, never a silent re-execution.
+
 - A deterministic key-value state machine: an ordered map with put, delete, get, compare-and-swap
   and half-open range scans. Compare-and-swap covers create-if-absent and delete-if-equal, which is
   what a lock on top of the store is built from.

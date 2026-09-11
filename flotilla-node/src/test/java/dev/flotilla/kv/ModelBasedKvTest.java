@@ -50,7 +50,8 @@ class ModelBasedKvTest {
         long index = 1;
         for (Command command : program) {
             KvResponse expected = applyToModel(model, command);
-            KvResponse actual = CommandCodec.decodeResponse(machine.apply(index++, CommandCodec.encode(command)));
+            KvResponse actual = CommandCodec.decodeResponse(
+                    machine.apply(index++, CommandCodec.encode(KvRequest.anonymous(command))));
 
             assertThat(actual).as("after %s", command).isEqualTo(expected);
         }
@@ -67,7 +68,7 @@ class ModelBasedKvTest {
         KvStateMachine original = new KvStateMachine();
         long index = 1;
         for (Command command : program) {
-            original.apply(index++, CommandCodec.encode(command));
+            original.apply(index++, CommandCodec.encode(KvRequest.anonymous(command)));
         }
 
         KvStateMachine restored = new KvStateMachine();
@@ -82,7 +83,8 @@ class ModelBasedKvTest {
     @DisplayName("every command that can be built can be encoded and read back")
     void commandsRoundTripThroughTheCodec(@ForAll("programs") List<Command> program) {
         for (Command command : program) {
-            assertThat(CommandCodec.decodeCommand(CommandCodec.encode(command))).isEqualTo(command);
+            assertThat(CommandCodec.decodeCommand(CommandCodec.encode(KvRequest.anonymous(command))))
+                    .isEqualTo(command);
         }
     }
 

@@ -140,7 +140,7 @@ class KvStateMachineTest {
     @Test
     @DisplayName("apply advances the applied index and answers in encoded form")
     void applyGoesThroughTheCodec() {
-        Bytes response = machine.apply(7, CommandCodec.encode(Command.put("k", "v")));
+        Bytes response = machine.apply(7, CommandCodec.encode(KvRequest.anonymous(Command.put("k", "v"))));
 
         assertThat(CommandCodec.decodeResponse(response)).isEqualTo(KvResponse.ABSENT);
         assertThat(machine.lastAppliedIndex()).isEqualTo(7);

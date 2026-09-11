@@ -15,20 +15,24 @@ import java.util.TreeMap;
 
 public final class KvSnapshotCodec {
 
-    public static final byte FORMAT_VERSION = 1;
+    public static final byte FORMAT_VERSION = 2;
 
     private static final int MAX_KEYS = 100_000_000;
+    private static final int MAX_SESSIONS = 10_000_000;
 
     private KvSnapshotCodec() {}
 
-    public static Bytes encode(long lastAppliedIndex, NavigableMap<Bytes, Bytes> data) {
+    public static Bytes encode(
+            long lastAppliedIndex, NavigableMap<Bytes, Bytes> data, NavigableMap<Long, Session> sessions) {
         Objects.requireNonNull(data, "data");
-        int size = 1 + Long.BYTES + Integer.BYTES;
+        Objects.requireNonNull(sessions, "sessions");
+
+        int size = 1 + Long.BYTES + Integer.BYTES + Integer.BYTES;
         for (Map.Entry<Bytes, Bytes> entry : data.entrySet()) {
-            size += Integer.BYTES
-                    + entry.getKey().size()
-                    + Integer.BYTES
-                    + entry.getValue().size();
+            size += field(entry.getKey()) + field(entry.getValue());
+        }
+        for (Session session : sessions.values()) {
+            size += Long.BYTES + Long.BYTES + Long.BYTES + field(session.lastResponse());
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(size).order(ByteOrder.BIG_ENDIAN);
@@ -38,6 +42,13 @@ public final class KvSnapshotCodec {
         for (Map.Entry<Bytes, Bytes> entry : data.entrySet()) {
             putField(buffer, entry.getKey());
             putField(buffer, entry.getValue());
+        }
+        buffer.putInt(sessions.size());
+        for (Map.Entry<Long, Session> entry : sessions.entrySet()) {
+            buffer.putLong(entry.getKey());
+            buffer.putLong(entry.getValue().lastSequence());
+            buffer.putLong(entry.getValue().lastActiveIndex());
+            putField(buffer, entry.getValue().lastResponse());
         }
         return Bytes.wrap(buffer.array());
     }
@@ -51,26 +62,45 @@ public final class KvSnapshotCodec {
                 throw new MalformedCommandException("Snapshot format version " + version + " is not " + FORMAT_VERSION);
             }
             long lastAppliedIndex = buffer.getLong();
-            int keys = buffer.getInt();
-            if (keys < 0 || keys > MAX_KEYS) {
-                throw new MalformedCommandException("Snapshot declares " + keys + " keys, outside 0.." + MAX_KEYS);
-            }
+
+            int keys = bounded(buffer.getInt(), MAX_KEYS, "keys");
             NavigableMap<Bytes, Bytes> data = new TreeMap<>();
             for (int i = 0; i < keys; i++) {
                 data.put(field(buffer), field(buffer));
             }
+
+            int sessionCount = bounded(buffer.getInt(), MAX_SESSIONS, "sessions");
+            NavigableMap<Long, Session> sessions = new TreeMap<>();
+            for (int i = 0; i < sessionCount; i++) {
+                long clientId = buffer.getLong();
+                long lastSequence = buffer.getLong();
+                long lastActiveIndex = buffer.getLong();
+                sessions.put(clientId, new Session(lastSequence, field(buffer), lastActiveIndex));
+            }
+
             if (buffer.hasRemaining()) {
                 throw new MalformedCommandException(buffer.remaining() + " trailing bytes after the snapshot");
             }
-            return new Snapshot(lastAppliedIndex, data);
+            return new Snapshot(lastAppliedIndex, data, sessions);
         } catch (BufferUnderflowException truncated) {
             throw new MalformedCommandException("Snapshot ends in the middle of a field", truncated);
         }
     }
 
-    private static void putField(ByteBuffer buffer, Bytes field) {
-        buffer.putInt(field.size());
-        buffer.put(field.toByteArray());
+    private static int bounded(int count, int max, String what) {
+        if (count < 0 || count > max) {
+            throw new MalformedCommandException("Snapshot declares " + count + " " + what + ", outside 0.." + max);
+        }
+        return count;
+    }
+
+    private static int field(Bytes value) {
+        return Integer.BYTES + value.size();
+    }
+
+    private static void putField(ByteBuffer buffer, Bytes value) {
+        buffer.putInt(value.size());
+        buffer.put(value.toByteArray());
     }
 
     private static Bytes field(ByteBuffer buffer) {
@@ -88,5 +118,6 @@ public final class KvSnapshotCodec {
         return Bytes.wrap(field);
     }
 
-    public record Snapshot(long lastAppliedIndex, NavigableMap<Bytes, Bytes> data) {}
+    public record Snapshot(
+            long lastAppliedIndex, NavigableMap<Bytes, Bytes> data, NavigableMap<Long, Session> sessions) {}
 }

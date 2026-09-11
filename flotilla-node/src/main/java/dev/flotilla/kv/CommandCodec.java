@@ -27,11 +27,60 @@ public final class CommandCodec {
     private static final byte VALUE = 1;
     private static final byte SWAPPED = 2;
     private static final byte ENTRIES = 3;
+    private static final byte OPENED = 4;
+    private static final byte REJECTED = 5;
+
+    private static final byte REASON_UNKNOWN_SESSION = 1;
+    private static final byte REASON_STALE_SEQUENCE = 2;
+
+    private static final byte REGISTER = 1;
+    private static final byte INVOKE = 2;
 
     private static final byte ABSENT = 0;
     private static final byte PRESENT = 1;
 
     private CommandCodec() {}
+
+    public static Bytes encode(KvRequest request) {
+        Objects.requireNonNull(request, "request");
+        return switch (request) {
+            case KvRequest.Register ignored -> Bytes.wrap(new byte[] {REGISTER});
+            case KvRequest.Invoke invoke -> {
+                Bytes command = encode(invoke.command());
+                ByteBuffer buffer = ByteBuffer.allocate(1 + Long.BYTES + Long.BYTES + command.size())
+                        .order(ByteOrder.BIG_ENDIAN);
+                buffer.put(INVOKE);
+                buffer.putLong(invoke.clientId());
+                buffer.putLong(invoke.sequence());
+                buffer.put(command.toByteArray());
+                yield Bytes.wrap(buffer.array());
+            }
+        };
+    }
+
+    public static KvRequest decodeRequest(Bytes encoded) {
+        Objects.requireNonNull(encoded, "encoded");
+        ByteBuffer buffer = reader(encoded);
+        try {
+            byte type = buffer.get();
+            return switch (type) {
+                case REGISTER -> {
+                    requireFullyConsumed(buffer);
+                    yield new KvRequest.Register();
+                }
+                case INVOKE -> {
+                    long clientId = buffer.getLong();
+                    long sequence = buffer.getLong();
+                    Command command = readCommand(buffer);
+                    requireFullyConsumed(buffer);
+                    yield invoke(clientId, sequence, command);
+                }
+                default -> throw new MalformedCommandException("Unknown request type " + type);
+            };
+        } catch (BufferUnderflowException truncated) {
+            throw new MalformedCommandException("Request ends in the middle of a field", truncated);
+        }
+    }
 
     public static Bytes encode(Command command) {
         Objects.requireNonNull(command, "command");
@@ -70,17 +119,7 @@ public final class CommandCodec {
         Objects.requireNonNull(encoded, "encoded");
         ByteBuffer buffer = reader(encoded);
         try {
-            byte type = buffer.get();
-            Command command =
-                    switch (type) {
-                        case PUT -> new Command.Put(field(buffer), field(buffer));
-                        case DELETE -> new Command.Delete(field(buffer));
-                        case COMPARE_AND_SWAP ->
-                            new Command.CompareAndSwap(field(buffer), optionalField(buffer), optionalField(buffer));
-                        case GET -> new Command.Get(field(buffer));
-                        case SCAN -> new Command.Scan(field(buffer), field(buffer), limit(buffer.getInt()));
-                        default -> throw new MalformedCommandException("Unknown command type " + type);
-                    };
+            Command command = readCommand(buffer);
             requireFullyConsumed(buffer);
             return command;
         } catch (BufferUnderflowException truncated) {
@@ -108,6 +147,14 @@ public final class CommandCodec {
                     putField(buffer, entry.value());
                 }
             }
+            case KvResponse.Opened opened -> {
+                buffer.put(OPENED);
+                buffer.putLong(opened.clientId());
+            }
+            case KvResponse.Rejected rejected -> {
+                buffer.put(REJECTED);
+                buffer.put(reasonCode(rejected.reason()));
+            }
         }
         return Bytes.wrap(buffer.array());
     }
@@ -122,6 +169,8 @@ public final class CommandCodec {
                         case VALUE -> KvResponse.of(optionalField(buffer));
                         case SWAPPED -> new KvResponse.Swapped(flag(buffer.get()));
                         case ENTRIES -> new KvResponse.Entries(entries(buffer));
+                        case OPENED -> new KvResponse.Opened(buffer.getLong());
+                        case REJECTED -> new KvResponse.Rejected(reason(buffer.get()));
                         default -> throw new MalformedCommandException("Unknown response type " + type);
                     };
             requireFullyConsumed(buffer);
@@ -129,6 +178,43 @@ public final class CommandCodec {
         } catch (BufferUnderflowException truncated) {
             throw new MalformedCommandException("Response ends in the middle of a field", truncated);
         }
+    }
+
+    private static Command readCommand(ByteBuffer buffer) {
+        byte type = buffer.get();
+        return switch (type) {
+            case PUT -> new Command.Put(field(buffer), field(buffer));
+            case DELETE -> new Command.Delete(field(buffer));
+            case COMPARE_AND_SWAP ->
+                new Command.CompareAndSwap(field(buffer), optionalField(buffer), optionalField(buffer));
+            case GET -> new Command.Get(field(buffer));
+            case SCAN -> new Command.Scan(field(buffer), field(buffer), limit(buffer.getInt()));
+            default -> throw new MalformedCommandException("Unknown command type " + type);
+        };
+    }
+
+    private static KvRequest invoke(long clientId, long sequence, Command command) {
+        try {
+            return new KvRequest.Invoke(clientId, sequence, command);
+        } catch (IllegalArgumentException rejected) {
+            throw new MalformedCommandException(
+                    "Encoded request is not a valid one: " + rejected.getMessage(), rejected);
+        }
+    }
+
+    private static byte reasonCode(KvResponse.Reason reason) {
+        return switch (reason) {
+            case UNKNOWN_SESSION -> REASON_UNKNOWN_SESSION;
+            case STALE_SEQUENCE -> REASON_STALE_SEQUENCE;
+        };
+    }
+
+    private static KvResponse.Reason reason(byte code) {
+        return switch (code) {
+            case REASON_UNKNOWN_SESSION -> KvResponse.Reason.UNKNOWN_SESSION;
+            case REASON_STALE_SEQUENCE -> KvResponse.Reason.STALE_SEQUENCE;
+            default -> throw new MalformedCommandException("Unknown rejection reason " + code);
+        };
     }
 
     private static List<KeyValue> entries(ByteBuffer buffer) {
@@ -145,7 +231,7 @@ public final class CommandCodec {
 
     private static ByteBuffer reader(Bytes encoded) {
         if (encoded.isEmpty()) {
-            throw new MalformedCommandException("An encoded command is never empty");
+            throw new MalformedCommandException("An encoded value is never empty");
         }
         return ByteBuffer.wrap(encoded.toByteArray()).order(ByteOrder.BIG_ENDIAN);
     }
@@ -221,6 +307,8 @@ public final class CommandCodec {
                 + switch (response) {
                     case KvResponse.Value value -> optional(value.value());
                     case KvResponse.Swapped ignored -> 1;
+                    case KvResponse.Opened ignored -> Long.BYTES;
+                    case KvResponse.Rejected ignored -> 1;
                     case KvResponse.Entries entries -> {
                         int size = Integer.BYTES;
                         for (KeyValue entry : entries.entries()) {

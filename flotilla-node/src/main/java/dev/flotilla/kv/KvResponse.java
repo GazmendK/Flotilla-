@@ -30,6 +30,19 @@ public sealed interface KvResponse {
         }
     }
 
+    record Opened(long clientId) implements KvResponse {}
+
+    record Rejected(Reason reason) implements KvResponse {
+        public Rejected {
+            Objects.requireNonNull(reason, "reason");
+        }
+    }
+
+    enum Reason {
+        UNKNOWN_SESSION,
+        STALE_SEQUENCE
+    }
+
     Value ABSENT = new Value(null);
 
     static Value of(@Nullable Bytes value) {

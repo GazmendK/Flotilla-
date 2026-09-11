@@ -6,6 +6,7 @@ package dev.flotilla.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.flotilla.core.Bytes;
 import dev.flotilla.core.NodeId;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.DisplayName;
@@ -17,22 +18,22 @@ class ProposalRegistryTest {
 
     @Test
     void anAppliedEntryCompletesItsProposalWithTheIndex() {
-        CompletableFuture<Long> result = new CompletableFuture<>();
+        CompletableFuture<Applied> result = new CompletableFuture<>();
         registry.register(3, 7, result);
 
-        registry.completeApplied(7, 3);
+        registry.completeApplied(7, 3, Bytes.ofUtf8("ok"));
 
-        assertThat(result).isCompletedWithValue(7L);
+        assertThat(result).isCompletedWithValue(new Applied(7, Bytes.ofUtf8("ok")));
         assertThat(registry.size()).isZero();
     }
 
     @Test
     @DisplayName("an index reused by a later term fails the proposal instead of reporting a phantom commit")
     void anIndexReusedByAnotherTermIsNotACommit() {
-        CompletableFuture<Long> result = new CompletableFuture<>();
+        CompletableFuture<Applied> result = new CompletableFuture<>();
         registry.register(3, 7, result);
 
-        registry.completeApplied(7, 4);
+        registry.completeApplied(7, 4, Bytes.EMPTY);
 
         assertThat(result).isCompletedExceptionally();
         assertThat(causeOf(result)).isInstanceOf(NotLeaderException.class);
@@ -41,8 +42,8 @@ class ProposalRegistryTest {
     @Test
     @DisplayName("a proposal overwritten at the same index is failed, never left dangling")
     void reregisteringAnIndexFailsTheDisplacedProposal() {
-        CompletableFuture<Long> displaced = new CompletableFuture<>();
-        CompletableFuture<Long> replacement = new CompletableFuture<>();
+        CompletableFuture<Applied> displaced = new CompletableFuture<>();
+        CompletableFuture<Applied> replacement = new CompletableFuture<>();
         registry.register(3, 7, displaced);
 
         registry.register(4, 7, replacement);
@@ -54,7 +55,7 @@ class ProposalRegistryTest {
 
     @Test
     void applyingAnUnknownIndexIsHarmless() {
-        registry.completeApplied(99, 1);
+        registry.completeApplied(99, 1, Bytes.EMPTY);
 
         assertThat(registry.size()).isZero();
     }
@@ -62,8 +63,8 @@ class ProposalRegistryTest {
     @Test
     @DisplayName("losing leadership fails every waiter and names the new leader")
     void failAllRedirectsToTheNewLeader() {
-        CompletableFuture<Long> first = new CompletableFuture<>();
-        CompletableFuture<Long> second = new CompletableFuture<>();
+        CompletableFuture<Applied> first = new CompletableFuture<>();
+        CompletableFuture<Applied> second = new CompletableFuture<>();
         registry.register(3, 7, first);
         registry.register(3, 8, second);
 
@@ -77,7 +78,7 @@ class ProposalRegistryTest {
         assertThat(second).isCompletedExceptionally();
     }
 
-    private static Throwable causeOf(CompletableFuture<Long> future) {
+    private static Throwable causeOf(CompletableFuture<Applied> future) {
         try {
             future.join();
             return new AssertionError("expected the future to have failed");

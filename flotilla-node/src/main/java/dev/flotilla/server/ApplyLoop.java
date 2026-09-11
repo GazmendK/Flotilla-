@@ -4,6 +4,7 @@
  */
 package dev.flotilla.server;
 
+import dev.flotilla.core.Bytes;
 import dev.flotilla.core.EntryType;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.port.LogStore;
@@ -93,11 +94,11 @@ final class ApplyLoop implements Runnable {
     private void applyBatch(List<LogEntry> batch) {
         for (LogEntry entry : batch) {
             if (entry.index() > appliedIndex) {
-                if (entry.type() == EntryType.NORMAL) {
-                    stateMachine.apply(entry.index(), entry.data());
-                }
+                Bytes response = entry.type() == EntryType.NORMAL
+                        ? stateMachine.apply(entry.index(), entry.data())
+                        : Bytes.EMPTY;
                 appliedIndex = entry.index();
-                proposals.completeApplied(entry.index(), entry.term());
+                proposals.completeApplied(entry.index(), entry.term(), response);
             }
         }
         backlog.addAndGet(-batch.size());

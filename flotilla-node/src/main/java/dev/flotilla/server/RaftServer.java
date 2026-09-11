@@ -187,8 +187,16 @@ public final class RaftServer implements AutoCloseable {
     }
 
     public CompletableFuture<Long> propose(Bytes command) {
+        return submit(command).thenApply(Applied::index);
+    }
+
+    public CompletableFuture<Bytes> execute(Bytes command) {
+        return submit(command).thenApply(Applied::response);
+    }
+
+    public CompletableFuture<Applied> submit(Bytes command) {
         Objects.requireNonNull(command, "command");
-        CompletableFuture<Long> result = new CompletableFuture<>();
+        CompletableFuture<Applied> result = new CompletableFuture<>();
         if (closed.get() || !engine.isRunning()) {
             result.completeExceptionally(new IllegalStateException("Server " + id + " is not running"));
             return result;

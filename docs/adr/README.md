@@ -62,3 +62,5 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0017](0017-single-writer-event-loop.md) | One thread owns the Raft state | Accepted |
 | [0018](0018-apply-off-the-loop-fsync-on-it.md) | Apply moves off the event loop; the log does not | Accepted |
 | [0019](0019-hand-written-command-codec.md) | Commands are encoded by hand, not by a schema compiler | Accepted |
+| [0020](0020-client-sessions-for-exactly-once.md) | Client sessions, because Raft alone is only at-least-once | Accepted |
+| [0021](0021-no-wall-clock-in-the-state-machine.md) | The state machine never reads a clock | Accepted |

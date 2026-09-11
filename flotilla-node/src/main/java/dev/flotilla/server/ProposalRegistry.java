@@ -4,6 +4,7 @@
  */
 package dev.flotilla.server;
 
+import dev.flotilla.core.Bytes;
 import dev.flotilla.core.NodeId;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,20 +17,20 @@ final class ProposalRegistry {
 
     private final ConcurrentNavigableMap<Long, Pending> pending = new ConcurrentSkipListMap<>();
 
-    void register(long term, long index, CompletableFuture<Long> result) {
+    void register(long term, long index, CompletableFuture<Applied> result) {
         Pending replaced = pending.put(index, new Pending(term, result));
         if (replaced != null) {
             replaced.result().completeExceptionally(new NotLeaderException(null));
         }
     }
 
-    void completeApplied(long index, long term) {
+    void completeApplied(long index, long term, Bytes response) {
         Pending waiting = pending.remove(index);
         if (waiting == null) {
             return;
         }
         if (waiting.term() == term) {
-            waiting.result().complete(index);
+            waiting.result().complete(new Applied(index, response));
         } else {
             waiting.result().completeExceptionally(new NotLeaderException(null));
         }
@@ -50,5 +51,5 @@ final class ProposalRegistry {
         return pending.size();
     }
 
-    private record Pending(long term, CompletableFuture<Long> result) {}
+    private record Pending(long term, CompletableFuture<Applied> result) {}
 }

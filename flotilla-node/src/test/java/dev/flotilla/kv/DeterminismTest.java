@@ -36,7 +36,7 @@ class DeterminismTest {
         KvStateMachine machine = new KvStateMachine();
         long index = 1;
         for (Command command : commands) {
-            machine.apply(index++, CommandCodec.encode(command));
+            machine.apply(index++, CommandCodec.encode(KvRequest.anonymous(command)));
         }
         return machine;
     }
@@ -65,7 +65,7 @@ class DeterminismTest {
         caughtUp.restore(partial.snapshot());
         long index = split + 1L;
         for (Command command : commands.subList(split, commands.size())) {
-            caughtUp.apply(index++, CommandCodec.encode(command));
+            caughtUp.apply(index++, CommandCodec.encode(KvRequest.anonymous(command)));
         }
 
         assertThat(caughtUp.snapshot())
