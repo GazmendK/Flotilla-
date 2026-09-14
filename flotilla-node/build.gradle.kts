@@ -2,6 +2,7 @@ plugins {
     id("flotilla.java-conventions")
     id("flotilla.quality-conventions")
     id("flotilla.test-conventions")
+    id("flotilla.protobuf-conventions")
 }
 
 description = "Everything that turns the consensus core into a running node: durable storage, " +
@@ -9,4 +10,9 @@ description = "Everything that turns the consensus core into a running node: dur
 
 dependencies {
     api(project(":flotilla-core"))
+    implementation(libs.grpc.netty.shaded)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.grpc.stub)
+    implementation(libs.protobuf.java)
+    testImplementation(libs.grpc.inprocess)
 }

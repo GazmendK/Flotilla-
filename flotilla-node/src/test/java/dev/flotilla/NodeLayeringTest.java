@@ -86,4 +86,34 @@ class NodeLayeringTest {
                 .allowEmptyShould(true)
                 .check(CLASSES);
     }
+
+    @Test
+    @DisplayName("wire types never leave the transport")
+    void wireTypesStayAtTheEdge() {
+        noClasses()
+                .that()
+                .resideOutsideOfPackages("dev.flotilla.transport..", "dev.flotilla.wire..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAPackage("dev.flotilla.wire..")
+                .because("generated protobuf types are a wire format, not a domain model; once they "
+                        + "spread inward, changing the wire means changing the system")
+                .allowEmptyShould(true)
+                .check(CLASSES);
+    }
+
+    @Test
+    @DisplayName("the state machine and the log know nothing about the network stack")
+    void noNetworkingBelowTheTransport() {
+        noClasses()
+                .that()
+                .resideInAnyPackage("dev.flotilla.kv..", "dev.flotilla.storage..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.grpc..", "com.google.protobuf..")
+                .because("the log format and the state machine are hand-encoded on purpose; a protobuf "
+                        + "type here would make canonical encoding depend on a library's choices")
+                .allowEmptyShould(true)
+                .check(CLASSES);
+    }
 }

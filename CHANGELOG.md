@@ -12,6 +12,20 @@ not stable before 1.0.0.
 
 ### Added
 
+- Nodes talk to each other over gRPC. A versioned protobuf schema carries every Raft message in a
+  single one-way `Deliver` envelope, because the core already speaks asynchronous messages and a
+  request/response RPC per type would re-couple what it deliberately decoupled. `buf lint` runs in
+  CI, and `buf breaking` guards the wire format on every pull request.
+- A slow or dead peer can never stall the event loop or grow memory: deliveries per peer are bounded,
+  and a message that does not fit is dropped, which Raft already tolerates. Every message is
+  accounted for as delivered, dropped or failed.
+- Startup refuses configurations that cannot work: a delivery deadline that outlasts an election
+  timeout, or a message limit smaller than the largest batch a leader may send.
+- A three-node cluster over real sockets: leader election, replication to every state machine,
+  failover without losing an acknowledged write, and a follower restarted on a new port catching up.
+- Generated protobuf types never leave the transport, enforced by an architecture test, and the
+  state machine and the log may not depend on gRPC or protobuf at all.
+
 - Exactly-once execution through client sessions (thesis §6.3). A client registers once and numbers
   its requests; the state machine caches the last response per client, so a retry after a lost
   acknowledgement returns the stored answer instead of running again. Without it a Raft store is
@@ -78,6 +92,9 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- A message addressed to a different node made `RaftNode.step` throw on the event loop, which stops
+  the node for good. Over the network that is an input rather than a bug, so the transport now
+  refuses it at the edge; a test shows both the refusal and the crash it prevents.
 - Stopping the event loop by interrupting its thread destroyed the write-ahead log. `FileChannel`
   is an `InterruptibleChannel`, so an interrupt during a write closes the channel for good and the
   node died with `Cannot write to ....wal`. Shutdown now posts a `Shutdown` event and interrupts

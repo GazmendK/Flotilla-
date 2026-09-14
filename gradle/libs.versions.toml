@@ -19,6 +19,11 @@ assertj = "3.27.7"
 archunit = "1.5.0"
 jqwik = "1.10.1"
 
+# Transport
+grpc = "1.84.0"
+protobuf = "4.36.1"
+protobufPlugin = "0.10.0"
+
 [libraries]
 # Nullness annotations. compileOnly everywhere: they carry no runtime behaviour, and
 # flotilla-core must stay free of runtime dependencies.
@@ -36,11 +41,20 @@ assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 archunit = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
 jqwik = { module = "net.jqwik:jqwik", version.ref = "jqwik" }
 
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
+grpc-protoc-gen = { module = "io.grpc:protoc-gen-grpc-java", version.ref = "grpc" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
+
 # Plugin marker artifacts, consumed by build-logic so the convention plugins can apply them.
 # Using the markers (rather than the implementation coordinates) keeps the version identical
 # to what `plugins { id(...) version ... }` would resolve.
 build-spotless = { module = "com.diffplug.spotless:com.diffplug.spotless.gradle.plugin", version.ref = "spotless" }
 build-errorprone = { module = "net.ltgt.errorprone:net.ltgt.errorprone.gradle.plugin", version.ref = "errorpronePlugin" }
+build-protobuf = { module = "com.google.protobuf:com.google.protobuf.gradle.plugin", version.ref = "protobufPlugin" }
 
 [plugins]
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

@@ -18,6 +18,7 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     options.errorprone {
         disableWarningsInGeneratedCode = true
+        excludedPaths = ".*/build/generated/.*"
 
         error("NullAway")
         option("NullAway:AnnotatedPackages", "dev.flotilla")

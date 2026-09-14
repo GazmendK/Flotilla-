@@ -16,6 +16,25 @@ permissions:
   contents: read
 
 jobs:
+  proto:
+    name: protobuf schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Lint, and on pull requests check for breaking changes
+        # Lint runs on every push. The breaking-change check runs on pull requests against the base
+        # branch, so a change that would stop old and new nodes from understanding each other fails
+        # review instead of failing a rolling upgrade. Nothing is pushed to the Buf registry.
+        uses: bufbuild/buf-action@v1.5.0
+        with:
+          lint: true
+          format: false
+          breaking: ${{ github.event_name == 'pull_request' }}
+          push: false
+          pr_comment: false
+
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

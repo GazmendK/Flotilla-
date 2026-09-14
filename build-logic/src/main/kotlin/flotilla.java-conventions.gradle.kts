@@ -37,6 +37,8 @@ tasks.withType<Javadoc>().configureEach {
         addStringOption("Xwerror", "-quiet")
     }
 
+    exclude { element -> element.file.invariantSeparatorsPath.contains("/build/generated/") }
+
     onlyIf("module declares at least one type to document") { task ->
         (task as Javadoc).source.files.any { file -> file.name != "package-info.java" }
     }
