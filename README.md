@@ -13,11 +13,11 @@
 
 ---
 
-> **Status: Phase 8 of 15 done — the replicated store.**
-> A running node with a deterministic key-value state machine on top, and **exactly-once execution**
-> through client sessions — the part most Raft implementations leave out, and the reason a retried
-> compare-and-swap does not tell its caller it lost a race it actually won. Networking between
-> machines is Phase 9. See [`ROADMAP.md`](ROADMAP.md) for the full plan.
+> **Status: Phase 9 of 15 done — a distributed cluster.**
+> Nodes elect a leader and replicate over gRPC, and a client library finds the leader, retries
+> through failover without ever running a command twice, and records a history of every operation
+> for the linearizability checker in Phase 11. Snapshots and log compaction are Phase 10.
+> See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
 
@@ -134,6 +134,7 @@ Stated up front, because a bounded scope is a design decision:
 | [`docs/simulation.md`](docs/simulation.md) | How the simulation works, how to replay a seed, and what it provably does *not* catch |
 | [`docs/storage-format.md`](docs/storage-format.md) | The on-disk format, byte for byte, with a hexdump generated from the code |
 | [`docs/threading-model.md`](docs/threading-model.md) | Which work runs on which thread, every queue overflow policy, and the measured group commit numbers |
+| [`docs/wire-protocol.md`](docs/wire-protocol.md) | Both RPCs, delivery semantics, the error model, and sequence diagrams for election, replication and a request surviving a leader change |
 | [`docs/consistency-model.md`](docs/consistency-model.md) | What the system guarantees, what it does not, and where each boundary is drawn on purpose |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | The layers, and the rule that every safeguard is tested with itself disabled |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |

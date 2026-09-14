@@ -12,6 +12,23 @@ not stable before 1.0.0.
 
 ### Added
 
+- A client library. `FlotillaClient` finds the leader from any node, follows redirects without
+  waiting, backs off with full jitter, and retries with the same session sequence so a command whose
+  acknowledgement was lost is answered from the cache instead of running again. Against three real
+  nodes with the leader killed mid-sequence, thirty compare-and-swap increments leave the counter at
+  exactly thirty.
+- Outcomes are reported in Jepsen's vocabulary. Every command is recorded as `INVOKE` followed by
+  `OK`, `FAIL` or `INFO`, and a client that cannot know whether a command took effect says so with
+  `IndeterminateResultException` rather than reporting a failure that may be false.
+- A second RPC, `ClientService.Execute`, carrying the state machine's own encoded request, with a
+  documented error model: redirects as `UNAVAILABLE` with the leader in trailers, overload as
+  `RESOURCE_EXHAUSTED`, undecodable commands as `INVALID_ARGUMENT`.
+- A message from a peer whose channel is backing off now cuts that backoff short. After a ten-second
+  outage gRPC's own backoff would wait several more seconds before reaching a node that restarted on
+  its old port; with the hint, a test bounds it below three.
+- `docs/wire-protocol.md`, with sequence diagrams for election, replication and a request that
+  survives a leader change.
+
 - Nodes talk to each other over gRPC. A versioned protobuf schema carries every Raft message in a
   single one-way `Deliver` envelope, because the core already speaks asynchronous messages and a
   request/response RPC per type would re-couple what it deliberately decoupled. `buf lint` runs in
@@ -92,6 +109,8 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- A client command the state machine could not decode was proposed anyway and threw on the apply
+  thread, which stops the node for good. Commands are now validated before they are proposed.
 - A message addressed to a different node made `RaftNode.step` throw on the event loop, which stops
   the node for good. Over the network that is an input rather than a bug, so the transport now
   refuses it at the edge; a test shows both the refusal and the crash it prevents.

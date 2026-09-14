@@ -70,12 +70,18 @@ timestamp *into the entry*, and every replica uses that replicated value. See
 
 ## What a client must do
 
+`FlotillaClient` does all of this; the steps are listed for anyone writing a client of their own.
+
 1. `Register` once, and keep the returned `clientId`.
 2. Number requests from 1 upward, one in flight at a time.
 3. On a timeout or a lost connection, **retry the identical request** — same `clientId`, same
    `sequence`, same command. That is what makes the retry safe.
-4. On `UNKNOWN_SESSION`, register again and re-issue from sequence 1. The previous request may or
-   may not have taken effect; the store cannot say, and neither can the client without reading.
+4. On `UNKNOWN_SESSION`, ask whether any earlier attempt of this request could have reached the log.
+   If none could — the very first attempt was refused — register again and re-issue from sequence 1.
+   If one could, **do not re-issue**: the request may or may not have taken effect, and running it
+   under a new session is exactly the double execution sessions exist to prevent. Report it as
+   indeterminate.
 
 Step 4 is the honest edge. It is reachable only by a client that was silent longer than the session
-timeout, and it is reported rather than papered over.
+timeout, and it is reported rather than papered over — `FlotillaClient` throws
+`IndeterminateResultException` and records the operation as `INFO`.

@@ -139,4 +139,41 @@ class GrpcPeerTransportTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("a sign of life from a peer that is backing off reconnects at once instead of waiting out the backoff")
+    void aSignOfLifeCutsTheBackoffShort() throws Exception {
+        InetSocketAddress address = freeLoopbackAddress();
+        List<RaftMessage> received = new CopyOnWriteArrayList<>();
+
+        try (GrpcPeerTransport transport =
+                new GrpcPeerTransport(SELF, PeerDirectory.of(Map.of(PEER, address)), CONFIG)) {
+            long outageEnd = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+            while (System.nanoTime() < outageEnd) {
+                transport.send(message());
+                Thread.sleep(10);
+            }
+
+            Server peer = NettyServerBuilder.forAddress(address)
+                    .addService(new GrpcPeerService(PEER, received::add))
+                    .build()
+                    .start();
+            try {
+                transport.peerIsAlive(PEER);
+                long hinted = System.nanoTime();
+                while (received.isEmpty()
+                        && System.nanoTime() - hinted < Duration.ofSeconds(20).toNanos()) {
+                    transport.send(message());
+                    Thread.sleep(10);
+                }
+
+                assertThat(Duration.ofNanos(System.nanoTime() - hinted))
+                        .as("after ten seconds of failures gRPC's own backoff would still wait for several seconds")
+                        .isLessThan(Duration.ofSeconds(3));
+            } finally {
+                peer.shutdownNow();
+                peer.awaitTermination(5, TimeUnit.SECONDS);
+            }
+        }
+    }
 }

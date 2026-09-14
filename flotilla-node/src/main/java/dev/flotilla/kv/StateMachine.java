@@ -10,6 +10,8 @@ public interface StateMachine {
 
     Bytes apply(long index, Bytes command);
 
+    default void validate(Bytes command) {}
+
     Bytes snapshot();
 
     void restore(Bytes snapshot);

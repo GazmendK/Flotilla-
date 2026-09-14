@@ -8,8 +8,12 @@ import dev.flotilla.core.ClusterConfig;
 import dev.flotilla.core.RaftConfig;
 import dev.flotilla.kv.StateMachine;
 import dev.flotilla.storage.StorageConfig;
+import dev.flotilla.transport.CallFailure;
+import dev.flotilla.transport.CommandGateway;
+import dev.flotilla.transport.Executed;
 import dev.flotilla.transport.PeerDirectory;
 import dev.flotilla.transport.TransportConfig;
+import dev.flotilla.transport.grpc.GrpcClientService;
 import dev.flotilla.transport.grpc.GrpcPeerService;
 import dev.flotilla.transport.grpc.GrpcPeerTransport;
 import io.grpc.Server;
@@ -19,6 +23,8 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 
 public final class FlotillaNode implements AutoCloseable {
@@ -56,10 +62,15 @@ public final class FlotillaNode implements AutoCloseable {
         GrpcPeerTransport transport = new GrpcPeerTransport(raftConfig.nodeId(), peers, transportConfig);
         RaftServer server =
                 RaftServer.start(serverConfig, raftConfig, cluster, storageConfig, stateMachine, transport::send);
-        GrpcPeerService service = new GrpcPeerService(raftConfig.nodeId(), server::deliver);
+        GrpcPeerService service = new GrpcPeerService(raftConfig.nodeId(), message -> {
+            transport.peerIsAlive(message.from());
+            server.deliver(message);
+        });
+        CommandGateway gateway = gateway(server, stateMachine, peers);
         try {
             Server grpc = NettyServerBuilder.forAddress(bindAddress)
                     .addService(service)
+                    .addService(new GrpcClientService(gateway))
                     .maxInboundMessageSize(transportConfig.maxMessageBytes())
                     .permitKeepAliveTime(transportConfig.keepAliveTime().toNanos() / 2, TimeUnit.NANOSECONDS)
                     .permitKeepAliveWithoutCalls(true)
@@ -71,6 +82,35 @@ public final class FlotillaNode implements AutoCloseable {
             transport.close();
             throw new UncheckedIOException("Cannot listen on " + bindAddress, bindFailure);
         }
+    }
+
+    static CommandGateway gateway(RaftServer server, StateMachine stateMachine, PeerDirectory peers) {
+        return command -> {
+            try {
+                stateMachine.validate(command);
+            } catch (IllegalArgumentException invalid) {
+                return CompletableFuture.failedFuture(
+                        CallFailure.of(CallFailure.Kind.INVALID, String.valueOf(invalid.getMessage())));
+            }
+            return server.submit(command)
+                    .thenApply(applied -> new Executed(applied.index(), applied.response()))
+                    .exceptionallyCompose(failure -> CompletableFuture.failedFuture(translate(failure, peers)));
+        };
+    }
+
+    static CallFailure translate(Throwable failure, PeerDirectory peers) {
+        Throwable cause =
+                failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
+        return switch (cause) {
+            case NotLeaderException notLeader ->
+                CallFailure.notLeader(
+                        notLeader.leader().orElse(null),
+                        notLeader.leader().flatMap(peers::addressOf).orElse(null));
+            case BackpressureException overloaded ->
+                CallFailure.of(CallFailure.Kind.OVERLOADED, String.valueOf(overloaded.getMessage()));
+            case CallFailure callFailure -> callFailure;
+            default -> CallFailure.of(CallFailure.Kind.UNAVAILABLE, String.valueOf(cause.getMessage()));
+        };
     }
 
     static void validateTiming(ServerConfig serverConfig, RaftConfig raftConfig, TransportConfig transportConfig) {

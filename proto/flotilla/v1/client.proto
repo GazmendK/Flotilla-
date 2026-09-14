@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package flotilla.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "ClientProto";
+option java_package = "dev.flotilla.wire.v1";
+
+service ClientService {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}
+
+message ExecuteRequest {
+  bytes command = 1;
+}
+
+message ExecuteResponse {
+  int64 index = 1;
+  bytes result = 2;
+}

@@ -4,7 +4,7 @@
  */
 package dev.flotilla.kv;
 
-public class MalformedCommandException extends RuntimeException {
+public class MalformedCommandException extends IllegalArgumentException {
 
     public MalformedCommandException(String message) {
         super(message);

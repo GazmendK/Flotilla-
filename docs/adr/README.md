@@ -64,4 +64,6 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0019](0019-hand-written-command-codec.md) | Commands are encoded by hand, not by a schema compiler | Accepted |
 | [0020](0020-client-sessions-for-exactly-once.md) | Client sessions, because Raft alone is only at-least-once | Accepted |
 | [0021](0021-no-wall-clock-in-the-state-machine.md) | The state machine never reads a clock | Accepted |
+| [0022](0022-peer-transport-over-grpc.md) | Peers talk over gRPC through one one-way envelope | Accepted |
 | [0023](0023-wire-types-stay-at-the-edge.md) | Wire types stay at the edge | Accepted |
+| [0024](0024-client-library-and-error-model.md) | A client that retries safely and admits what it does not know | Accepted |

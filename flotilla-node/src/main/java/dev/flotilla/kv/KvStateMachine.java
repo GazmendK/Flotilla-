@@ -47,6 +47,11 @@ public final class KvStateMachine implements StateMachine {
         return response;
     }
 
+    @Override
+    public void validate(Bytes command) {
+        CommandCodec.decodeRequest(Objects.requireNonNull(command, "command"));
+    }
+
     public KvResponse execute(Command command) {
         Objects.requireNonNull(command, "command");
         return switch (command) {

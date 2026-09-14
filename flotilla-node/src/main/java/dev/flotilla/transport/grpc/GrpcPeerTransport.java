@@ -10,6 +10,7 @@ import dev.flotilla.transport.PeerDirectory;
 import dev.flotilla.transport.TransportConfig;
 import dev.flotilla.wire.v1.DeliverResponse;
 import dev.flotilla.wire.v1.RaftPeerServiceGrpc;
+import io.grpc.ConnectivityState;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
@@ -32,6 +33,7 @@ public final class GrpcPeerTransport implements AutoCloseable {
     private final AtomicLong delivered = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
+    private final AtomicLong backoffResets = new AtomicLong();
 
     private volatile boolean closed;
 
@@ -62,6 +64,13 @@ public final class GrpcPeerTransport implements AutoCloseable {
                 .deliver(MessageCodec.encode(message), new Completion(peer));
     }
 
+    public void peerIsAlive(NodeId node) {
+        Peer peer = peers.get(node);
+        if (peer != null && peer.reconnectIfBackingOff()) {
+            backoffResets.incrementAndGet();
+        }
+    }
+
     public long delivered() {
         return delivered.get();
     }
@@ -72,6 +81,10 @@ public final class GrpcPeerTransport implements AutoCloseable {
 
     public long failed() {
         return failed.get();
+    }
+
+    public long backoffResets() {
+        return backoffResets.get();
     }
 
     public int inflight(NodeId node) {
@@ -173,6 +186,14 @@ public final class GrpcPeerTransport implements AutoCloseable {
 
         void release() {
             inflight.decrementAndGet();
+        }
+
+        boolean reconnectIfBackingOff() {
+            if (channel.getState(false) != ConnectivityState.TRANSIENT_FAILURE) {
+                return false;
+            }
+            channel.resetConnectBackoff();
+            return true;
         }
 
         void shutdown() {
