@@ -26,4 +26,8 @@ public interface LogStore {
     void append(List<LogEntry> entries);
 
     void truncateSuffixFrom(long fromInclusive);
+
+    void compactTo(long index);
+
+    void resetTo(long index, long term);
 }

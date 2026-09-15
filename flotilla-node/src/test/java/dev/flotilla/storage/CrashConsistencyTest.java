@@ -297,4 +297,136 @@ class CrashConsistencyTest {
             }
         }
     }
+
+    private static final long COMPACT_TO = 14;
+    private static final long RESET_TO = 10;
+    private static final long RESET_TERM = 5;
+
+    private static boolean compactCrashingAt(FaultInjectingFileIo io, long crashPoint) {
+        try (SegmentedLogStore store = openDurable(io)) {
+            store.append(largeEntries());
+            store.sync();
+            io.resetWriteCount();
+            io.crashAtWrite(crashPoint);
+            store.compactTo(COMPACT_TO);
+            return false;
+        } catch (FaultInjectingFileIo.SimulatedCrash crashed) {
+            return true;
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a crash at any durability operation inside a compaction leaves either the old log or the compacted one")
+    void everyCrashDuringCompactionRecovers() {
+        FaultInjectingFileIo counting = new FaultInjectingFileIo();
+        assertThat(compactCrashingAt(counting, -1)).isFalse();
+        long total = counting.writeCount();
+        assertThat(total).isGreaterThan(2);
+
+        List<LogEntry> intended = largeEntries();
+        for (long crashPoint = 1; crashPoint <= total; crashPoint++) {
+            FaultInjectingFileIo io = new FaultInjectingFileIo();
+            assertThat(compactCrashingAt(io, crashPoint)).isTrue();
+            io.clearFaults();
+
+            try (SegmentedLogStore recovered = openDurable(io)) {
+                long first = recovered.firstIndex();
+                assertThat(first)
+                        .as("crash at operation %d of %d left a base that was never chosen", crashPoint, total)
+                        .isIn(1L, COMPACT_TO + 1);
+                assertThat(recovered.lastIndex())
+                        .as(
+                                "crash at operation %d of %d lost entries that were synced before compacting",
+                                crashPoint, total)
+                        .isEqualTo(intended.size());
+                if (first == COMPACT_TO + 1) {
+                    assertThat(recovered.termAt(COMPACT_TO))
+                            .isEqualTo(intended.get((int) COMPACT_TO - 1).term());
+                }
+                for (long index = first; index <= recovered.lastIndex(); index++) {
+                    assertThat(recovered.entryAt(index))
+                            .as("crash at operation %d of %d corrupted index %d", crashPoint, total, index)
+                            .contains(intended.get((int) index - 1));
+                }
+            }
+        }
+    }
+
+    private static List<LogEntry> entriesAfterReset() {
+        List<LogEntry> entries = new ArrayList<>();
+        for (long index = RESET_TO + 1; index <= RESET_TO + 3; index++) {
+            entries.add(LogEntry.normal(RESET_TERM, index, Bytes.ofUtf8("after-reset-" + index)));
+        }
+        return List.copyOf(entries);
+    }
+
+    private record ResetOutcome(boolean resetReturned, long acknowledged) {}
+
+    private static ResetOutcome resetCrashingAt(FaultInjectingFileIo io, long crashPoint) {
+        boolean resetReturned = false;
+        long acknowledged = 0;
+        try (SegmentedLogStore store = openDurable(io)) {
+            store.append(largeEntries());
+            store.sync();
+            io.resetWriteCount();
+            io.crashAtWrite(crashPoint);
+            store.resetTo(RESET_TO, RESET_TERM);
+            resetReturned = true;
+            store.append(entriesAfterReset());
+            store.sync();
+            acknowledged = RESET_TO + 3;
+        } catch (FaultInjectingFileIo.SimulatedCrash crashed) {
+            return new ResetOutcome(resetReturned, acknowledged);
+        }
+        return new ResetOutcome(resetReturned, acknowledged);
+    }
+
+    @Test
+    @DisplayName("a crash at any durability operation during a reset never brings the discarded log back")
+    void everyCrashDuringResetNeverResurrectsTheOldLog() {
+        FaultInjectingFileIo counting = new FaultInjectingFileIo();
+        assertThat(resetCrashingAt(counting, -1).acknowledged()).isEqualTo(RESET_TO + 3);
+        long total = counting.writeCount();
+        assertThat(total).isGreaterThan(4);
+
+        List<LogEntry> oldLog = largeEntries();
+        List<LogEntry> newLog = entriesAfterReset();
+        for (long crashPoint = 1; crashPoint <= total; crashPoint++) {
+            FaultInjectingFileIo io = new FaultInjectingFileIo();
+            ResetOutcome outcome = resetCrashingAt(io, crashPoint);
+            io.clearFaults();
+
+            try (SegmentedLogStore recovered = openDurable(io)) {
+                if (recovered.firstIndex() == 1) {
+                    assertThat(outcome.resetReturned())
+                            .as(
+                                    "crash at operation %d of %d: the reset had returned, yet the old log came back",
+                                    crashPoint, total)
+                            .isFalse();
+                    for (long index = 1; index <= recovered.lastIndex(); index++) {
+                        assertThat(recovered.entryAt(index))
+                                .as("crash at operation %d of %d corrupted old index %d", crashPoint, total, index)
+                                .contains(oldLog.get((int) index - 1));
+                    }
+                    continue;
+                }
+
+                assertThat(recovered.firstIndex())
+                        .as("crash at operation %d of %d produced a base that was never chosen", crashPoint, total)
+                        .isEqualTo(RESET_TO + 1);
+                assertThat(recovered.termAt(RESET_TO)).isEqualTo(RESET_TERM);
+                assertThat(recovered.lastIndex())
+                        .as("crash at operation %d of %d lost an acknowledged entry after the reset", crashPoint, total)
+                        .isGreaterThanOrEqualTo(Math.max(RESET_TO, outcome.acknowledged()));
+                for (long index = RESET_TO + 1; index <= recovered.lastIndex(); index++) {
+                    assertThat(recovered.entryAt(index))
+                            .as(
+                                    "crash at operation %d of %d resurrected or corrupted index %d",
+                                    crashPoint, total, index)
+                            .contains(newLog.get((int) (index - RESET_TO - 1)));
+                }
+            }
+        }
+    }
 }

@@ -53,6 +53,17 @@ public final class SimLogStore implements LogStore {
         syncedThrough = Math.min(syncedThrough, fromInclusive - 1);
     }
 
+    @Override
+    public void compactTo(long index) {
+        delegate.compactTo(index);
+    }
+
+    @Override
+    public void resetTo(long index, long term) {
+        delegate.resetTo(index, term);
+        syncedThrough = index;
+    }
+
     public void syncThrough(long index) {
         syncedThrough = Math.max(syncedThrough, Math.min(index, delegate.lastIndex()));
     }
@@ -62,7 +73,7 @@ public final class SimLogStore implements LogStore {
     }
 
     public void discardUnsynced() {
-        delegate.truncateSuffixFrom(syncedThrough + 1);
+        delegate.truncateSuffixFrom(Math.max(syncedThrough + 1, delegate.firstIndex()));
     }
 
     public List<LogEntry> snapshotEntries() {

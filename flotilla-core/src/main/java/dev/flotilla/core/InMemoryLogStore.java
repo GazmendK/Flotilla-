@@ -15,6 +15,7 @@ public final class InMemoryLogStore implements LogStore {
     private final List<LogEntry> entries = new ArrayList<>();
 
     private long firstIndex = 1;
+    private long baseTerm;
 
     @Override
     public long firstIndex() {
@@ -28,8 +29,8 @@ public final class InMemoryLogStore implements LogStore {
 
     @Override
     public long termAt(long index) {
-        if (index == 0) {
-            return 0;
+        if (index == firstIndex - 1) {
+            return baseTerm;
         }
         if (index < firstIndex) {
             throw new LogCompactedException(index, firstIndex);
@@ -111,6 +112,40 @@ public final class InMemoryLogStore implements LogStore {
             return;
         }
         entries.subList((int) (fromInclusive - firstIndex), entries.size()).clear();
+    }
+
+    @Override
+    public void compactTo(long index) {
+        long base = firstIndex - 1;
+        if (index < base) {
+            throw new IllegalArgumentException(
+                    "Cannot compact to index " + index + "; the log is already compacted through " + base + ".");
+        }
+        if (index > lastIndex()) {
+            throw new IllegalArgumentException(
+                    "Cannot compact to index " + index + "; the log ends at index " + lastIndex() + ".");
+        }
+        if (index == base) {
+            return;
+        }
+        long term = termAt(index);
+        entries.subList(0, (int) (index - base)).clear();
+        firstIndex = index + 1;
+        baseTerm = term;
+    }
+
+    @Override
+    public void resetTo(long index, long term) {
+        if (index < firstIndex - 1) {
+            throw new IllegalArgumentException("Cannot reset to index " + index
+                    + "; that would move the snapshot point back from " + (firstIndex - 1) + ".");
+        }
+        if (term < 0) {
+            throw new IllegalArgumentException("term must not be negative, was " + term);
+        }
+        entries.clear();
+        firstIndex = index + 1;
+        baseTerm = term;
     }
 
     @Override

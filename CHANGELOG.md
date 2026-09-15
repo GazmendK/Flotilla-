@@ -12,6 +12,15 @@ not stable before 1.0.0.
 
 ### Added
 
+- Log compaction in the storage layer. `compactTo` discards a prefix a snapshot covers while keeping
+  the term of its last entry, which the next append after a snapshot depends on; `resetTo` discards
+  the whole log when a follower installs a snapshot its log does not match. Both are part of the
+  shared log contract, so the in-memory and the on-disk store behave identically.
+- A small `logbase` file, two checksummed slots like the hard state, is the commit point of every
+  compaction. Resetting truncates and syncs the old log before writing the new base, and a crash test
+  at every durability operation proves that the discarded log never comes back — writing the base
+  first resurrects an old entry at the third crash point.
+
 - A client library. `FlotillaClient` finds the leader from any node, follows redirects without
   waiting, backs off with full jitter, and retries with the same session sequence so a command whose
   acknowledgement was lost is answered from the cache instead of running again. Against three real

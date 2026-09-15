@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.flotilla.core.Bytes;
 import dev.flotilla.core.LogEntry;
+import dev.flotilla.core.port.LogCompactedException;
 import dev.flotilla.core.port.LogStore;
 import java.util.List;
 import java.util.stream.LongStream;
@@ -174,5 +175,116 @@ abstract class LogStoreContractTest {
                 .extracting(LogEntry::index)
                 .containsExactlyElementsOf(
                         LongStream.rangeClosed(1, 500).boxed().toList());
+    }
+
+    @Test
+    @DisplayName("after compaction the term of the last compacted entry is still known")
+    void compactionKeepsTheTermAtTheSnapshotPoint() {
+        log.append(entries(1, 1, 3));
+        log.append(entries(2, 4, 3));
+
+        log.compactTo(4);
+
+        assertThat(log.firstIndex()).isEqualTo(5);
+        assertThat(log.lastIndex()).isEqualTo(6);
+        assertThat(log.termAt(4))
+                .as("the leader needs this term as prevLogTerm for the next append after a snapshot")
+                .isEqualTo(2);
+        assertThat(log.termAt(5)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("reading below the compacted prefix is a defined error, never a wrong entry")
+    void readingACompactedIndexIsReportedPrecisely() {
+        log.append(entries(1, 1, 6));
+
+        log.compactTo(4);
+
+        assertThatThrownBy(() -> log.termAt(3)).isInstanceOfSatisfying(LogCompactedException.class, failure -> {
+            assertThat(failure.requestedIndex()).isEqualTo(3);
+            assertThat(failure.firstAvailableIndex()).isEqualTo(5);
+        });
+        assertThatThrownBy(() -> log.entriesFrom(2, 10, Long.MAX_VALUE)).isInstanceOf(LogCompactedException.class);
+        assertThat(log.entryAt(4)).isEmpty();
+        assertThat(log.entriesFrom(5, 10, Long.MAX_VALUE))
+                .extracting(LogEntry::index)
+                .containsExactly(5L, 6L);
+    }
+
+    @Test
+    void appendingContinuesAfterCompaction() {
+        log.append(entries(1, 1, 3));
+        log.compactTo(3);
+
+        log.append(entries(2, 4, 2));
+
+        assertThat(log.lastIndex()).isEqualTo(5);
+        assertThat(log.termAt(3)).isEqualTo(1);
+        assertThat(log.entryAt(5)).map(LogEntry::term).contains(2L);
+    }
+
+    @Test
+    @DisplayName("compacting everything leaves an empty log that still knows where it stands")
+    void compactingTheWholeLogKeepsItAnchored() {
+        log.append(entries(3, 1, 3));
+
+        log.compactTo(3);
+
+        assertThat(log.isEmpty()).isTrue();
+        assertThat(log.firstIndex()).isEqualTo(4);
+        assertThat(log.lastIndex()).isEqualTo(3);
+        assertThat(log.termAt(3)).isEqualTo(3);
+        log.append(entries(4, 4, 1));
+        assertThat(log.lastIndex()).isEqualTo(4);
+    }
+
+    @Test
+    void compactionCannotMoveBackwardsOrPastTheEnd() {
+        log.append(entries(1, 1, 5));
+        log.compactTo(3);
+
+        log.compactTo(3);
+
+        assertThatThrownBy(() -> log.compactTo(2)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> log.compactTo(9)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(log.firstIndex()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("a divergent suffix can still be truncated, but never into the compacted prefix")
+    void truncationStopsAtTheCompactedPrefix() {
+        log.append(entries(1, 1, 6));
+        log.compactTo(3);
+
+        assertThatThrownBy(() -> log.truncateSuffixFrom(3)).isInstanceOf(IllegalArgumentException.class);
+        log.truncateSuffixFrom(5);
+
+        assertThat(log.lastIndex()).isEqualTo(4);
+        assertThat(log.firstIndex()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("resetting to a snapshot discards the whole log and resumes right after the snapshot")
+    void resetDiscardsTheWholeLog() {
+        log.append(entries(1, 1, 5));
+
+        log.resetTo(20, 7);
+
+        assertThat(log.firstIndex()).isEqualTo(21);
+        assertThat(log.lastIndex()).isEqualTo(20);
+        assertThat(log.isEmpty()).isTrue();
+        assertThat(log.termAt(20)).isEqualTo(7);
+        assertThat(log.entryAt(3)).isEmpty();
+        assertThatThrownBy(() -> log.termAt(5)).isInstanceOf(LogCompactedException.class);
+        log.append(entries(8, 21, 2));
+        assertThat(log.lastIndex()).isEqualTo(22);
+    }
+
+    @Test
+    void resetCannotMoveTheSnapshotPointBackwards() {
+        log.append(entries(1, 1, 5));
+        log.compactTo(4);
+
+        assertThatThrownBy(() -> log.resetTo(3, 1)).isInstanceOf(IllegalArgumentException.class);
     }
 }

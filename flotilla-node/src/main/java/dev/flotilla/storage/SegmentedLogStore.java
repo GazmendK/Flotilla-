@@ -19,35 +19,56 @@ public final class SegmentedLogStore implements DurableLogStore {
     private final Path directory;
     private final StorageConfig config;
     private final List<LogSegment> segments = new ArrayList<>();
+    private final LogBase base;
 
     private long discardedBytesOnRecovery;
     private int unfinishedSegments;
+    private int compactedSegments;
 
-    private SegmentedLogStore(FileIo io, Path directory, StorageConfig config) {
+    private SegmentedLogStore(FileIo io, Path directory, StorageConfig config, LogBase base) {
         this.io = io;
         this.directory = directory;
         this.config = config;
+        this.base = base;
     }
 
     public static SegmentedLogStore open(StorageDirectory storage, StorageConfig config) {
         Objects.requireNonNull(storage, "storage");
         Objects.requireNonNull(config, "config");
-        SegmentedLogStore store = new SegmentedLogStore(storage.io(), storage.path(), config);
+        LogBase base = LogBase.open(storage.io(), storage.path());
+        SegmentedLogStore store = new SegmentedLogStore(storage.io(), storage.path(), config, base);
         store.recover();
         return store;
     }
 
     private void recover() {
+        long baseIndex = base.index();
+        boolean deleted = false;
         List<Path> files = io.listSorted(directory, LogSegment.SUFFIX);
         for (Path file : files) {
             Optional<LogSegment> opened = LogSegment.open(io, file);
             if (opened.isEmpty()) {
                 unfinishedSegments++;
                 io.delete(file);
+                deleted = true;
                 continue;
             }
             LogSegment segment = opened.get();
             discardedBytesOnRecovery += segment.discardedBytes();
+            if (segment.firstIndex() <= baseIndex && segment.lastIndex() <= baseIndex) {
+                segment.close();
+                io.delete(file);
+                compactedSegments++;
+                deleted = true;
+                continue;
+            }
+            if (segments.isEmpty() && segment.firstIndex() > baseIndex + 1) {
+                segment.close();
+                closeAll();
+                throw new CorruptionException("Segment " + file + " starts at index " + segment.firstIndex()
+                        + " but the log is compacted only through " + baseIndex
+                        + "; the entries in between are missing and the log cannot be trusted");
+            }
             if (!segments.isEmpty()) {
                 LogSegment previous = segments.getLast();
                 long expected = previous.lastIndex() + 1;
@@ -62,7 +83,10 @@ public final class SegmentedLogStore implements DurableLogStore {
             segments.add(segment);
         }
         if (segments.isEmpty()) {
-            segments.add(LogSegment.create(io, directory, 1));
+            segments.add(LogSegment.create(io, directory, baseIndex + 1));
+            deleted = true;
+        }
+        if (deleted) {
             io.syncDirectory(directory);
         }
     }
@@ -79,9 +103,13 @@ public final class SegmentedLogStore implements DurableLogStore {
         return segments.size();
     }
 
+    public int compactedSegmentsOnRecovery() {
+        return compactedSegments;
+    }
+
     @Override
     public long firstIndex() {
-        return segments.getFirst().firstIndex();
+        return base.index() + 1;
     }
 
     @Override
@@ -91,8 +119,8 @@ public final class SegmentedLogStore implements DurableLogStore {
 
     @Override
     public long termAt(long index) {
-        if (index == 0) {
-            return 0;
+        if (index == base.index()) {
+            return base.term();
         }
         if (index < firstIndex()) {
             throw new LogCompactedException(index, firstIndex());
@@ -195,6 +223,56 @@ public final class SegmentedLogStore implements DurableLogStore {
     }
 
     @Override
+    public void compactTo(long index) {
+        long current = base.index();
+        if (index < current) {
+            throw new IllegalArgumentException(
+                    "Cannot compact to index " + index + "; the log is already compacted through " + current + ".");
+        }
+        if (index > lastIndex()) {
+            throw new IllegalArgumentException(
+                    "Cannot compact to index " + index + "; the log ends at index " + lastIndex() + ".");
+        }
+        if (index == current) {
+            return;
+        }
+        base.update(index, termAt(index));
+
+        boolean removedSegments = false;
+        while (segments.size() > 1 && segments.getFirst().lastIndex() <= index) {
+            LogSegment removed = segments.removeFirst();
+            removed.close();
+            io.delete(removed.path());
+            removedSegments = true;
+        }
+        if (removedSegments) {
+            io.syncDirectory(directory);
+        }
+    }
+
+    @Override
+    public void resetTo(long index, long term) {
+        if (index < base.index()) {
+            throw new IllegalArgumentException("Cannot reset to index " + index
+                    + "; that would move the snapshot point back from " + base.index() + ".");
+        }
+        if (term < 0) {
+            throw new IllegalArgumentException("term must not be negative, was " + term);
+        }
+        truncateSuffixFrom(firstIndex());
+        sync();
+        base.update(index, term);
+
+        for (LogSegment segment : segments) {
+            segment.close();
+            io.delete(segment.path());
+        }
+        segments.clear();
+        segments.add(LogSegment.create(io, directory, index + 1));
+        io.syncDirectory(directory);
+    }
+
+    @Override
     public void sync() {
         segments.getLast().sync();
     }
@@ -202,6 +280,7 @@ public final class SegmentedLogStore implements DurableLogStore {
     @Override
     public void close() {
         closeAll();
+        base.close();
     }
 
     private void closeAll() {

@@ -12,6 +12,7 @@ accelerated on every CPU this will realistically run on.
 <data-dir>/
   LAYOUT                          text: version=1
   hardstate                       256 bytes, two 128-byte slots
+  logbase                         64 bytes, two 32-byte slots: where the log begins
   00000000000000000001.wal        segment starting at log index 1
   00000000000000000513.wal        segment starting at log index 513
 ```
@@ -120,6 +121,52 @@ the first is still untouched:
 0252  fa 95 d1 33               CRC32C
 ```
 
+## Log base — 64 bytes, two slots
+
+Compaction discards a prefix of the log that a snapshot already covers. What it must not discard is
+the **term of the last compacted entry**: the leader sends it as `prevLogTerm` in the next append,
+and a follower checks it. The log base records that one entry's position.
+
+The file uses the same two-slot scheme as the hard state, and for the same reason: an interrupted
+write damages only the slot being written. It is written and synced before any segment is
+deleted, so it is the commit point of every compaction.
+
+Each slot:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | generation, starts at 1 |
+| 8 | 8 | base index — the last compacted entry, 0 for an uncompacted log |
+| 16 | 8 | base term — that entry's term |
+| 24 | 4 | CRC32C of bytes 0–23 |
+| 28 | 4 | reserved, zero |
+
+A missing file, or two unusable slots, means base `(0, 0)`: nothing compacted. The log's first index
+is always `base index + 1`, regardless of which segment files happen to still exist.
+
+### Compacting
+
+`compactTo(index)` writes the new base and syncs it, then deletes every segment that lies wholly at
+or below that index, then syncs the directory. A segment that straddles the base is kept; the
+entries in it that sit below the base are unreachable and simply stay on disk until the whole
+segment falls behind a later base.
+
+### Resetting to a snapshot
+
+When a follower installs a snapshot its log does not match, the whole log goes, and the order is the
+entire correctness argument:
+
+1. truncate every entry, and sync — the existing, crash-tested truncation
+2. write the new base, and sync
+3. delete the old segments, create one starting at `base index + 1`, sync the directory
+
+Writing the base first instead would leave a window in which the new base sits beside old segments
+still holding a **divergent suffix beyond it**, and recovery would accept those entries as the log.
+Deleting first would leave the old base beside a log with its committed prefix gone. With this
+order, a crash at any point leaves either the old log or the new one — never a mixture.
+`everyCrashDuringResetNeverResurrectsTheOldLog` and `everyCrashDuringCompactionRecovers` crash at
+every durability operation, and swapping either order makes them fail.
+
 ## Recovery
 
 On open, each segment is scanned from its header forwards. Scanning stops at the first record that
@@ -132,6 +179,11 @@ is not fully readable:
 
 Everything from that point on is discarded and the file is truncated. The number of discarded
 bytes is reported by the store so that operators, and tests, can see it rather than guess.
+
+Segments that lie wholly at or below the log base are left over from a compaction or reset that
+crashed before deleting them. They are deleted on open. A remaining first segment that starts
+**after** `base index + 1` would mean entries between the base and the log are missing, and is
+refused as corruption.
 
 A gap **between** segments is different: it can only mean a segment file was lost, and no amount
 of truncation makes the log correct again. That is refused loudly.
