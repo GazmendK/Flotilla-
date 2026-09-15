@@ -16,6 +16,7 @@ import java.util.TreeSet;
 public final class FaultInjectingFileIo implements FileIo {
 
     private final SortedMap<Path, VirtualFile> files = new TreeMap<>();
+    private final SortedMap<Path, VirtualFile> durableEntries = new TreeMap<>();
     private final SortedSet<Path> directories = new TreeSet<>();
 
     private long writeCount;
@@ -50,7 +51,11 @@ public final class FaultInjectingFileIo implements FileIo {
     }
 
     public void crash() {
-        files.values().forEach(VirtualFile::crash);
+        files.clear();
+        for (var entry : durableEntries.entrySet()) {
+            entry.getValue().crash();
+            files.put(entry.getKey(), entry.getValue());
+        }
     }
 
     public long durableSizeOf(Path path) {
@@ -88,12 +93,20 @@ public final class FaultInjectingFileIo implements FileIo {
 
     @Override
     public void delete(Path path) {
+        crashBefore("delete of " + path);
         files.remove(path);
     }
 
     @Override
     public void syncDirectory(Path directory) {
+        crashBefore("sync of directory " + directory);
         directories.add(directory);
+        durableEntries.keySet().removeIf(path -> directory.equals(path.getParent()));
+        for (var entry : files.entrySet()) {
+            if (directory.equals(entry.getKey().getParent())) {
+                durableEntries.put(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     private int beginWrite(int length) {
@@ -105,6 +118,17 @@ public final class FaultInjectingFileIo implements FileIo {
             return Math.max(1, length / 2);
         }
         return length;
+    }
+
+    private void crashBefore(String operation) {
+        writeCount++;
+        if (writeCount == failAtWrite) {
+            throw new OutOfSpace("Simulated failure of " + operation);
+        }
+        if (writeCount == crashAtWrite || writeCount == tearAtWrite) {
+            crash();
+            throw new SimulatedCrash("Simulated crash before " + operation);
+        }
     }
 
     private void endWrite() {
@@ -212,6 +236,7 @@ public final class FaultInjectingFileIo implements FileIo {
 
         @Override
         public void sync() {
+            crashBefore("sync of " + path);
             file.sync();
         }
 

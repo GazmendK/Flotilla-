@@ -57,7 +57,7 @@ This section is the point of the project. It will fill in as the phases land:
 | ☑ | All five safety properties from Figure 3 of the Raft paper, checked after every step | 5 |
 | ☑ | Figure 7 and Figure 8 of the paper encoded as test cases | 4 |
 | ☑ | Fault injection proving the checkers actually detect known-bad behaviour | 5 |
-| ☑ | Crash-consistency verified by injecting a crash at every physical write | 6 |
+| ☑ | Crash-consistency verified by injecting a crash at every write, sync, delete and directory sync | 6 |
 | ☐ | A linearizability checker, run over real cluster histories | 11 |
 | ☑ | Every safeguard tested with itself disabled, so it is known to fail without it | 3 |
 | ☑ | Determinism enforced as tests: the core cannot acquire I/O, threads, a clock or unseeded randomness | 2 |

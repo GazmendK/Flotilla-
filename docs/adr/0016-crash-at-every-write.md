@@ -60,3 +60,31 @@ is a claim with no luck in it.
   header provably contains no entries, because the header is synced before anything is appended,
   so the correct response is to discard it and continue. That distinction is easy to state once
   seen and easy to miss entirely without a test that lands exactly there.
+
+## Amendment — 2026-09-14: the model was too kind
+
+The original fault model had two gaps, and together they hid a bug of exactly the kind this ADR
+exists to catch.
+
+**Directory changes were durable immediately.** Creating or deleting a file took effect for good
+the moment it happened. On a real Unix file system an unlink or a new directory entry survives a
+power loss only after the *directory* has been fsynced; before that, a deleted file can come back.
+
+**Crash points were writes only.** A crash could land between two writes but never between a file
+sync and a directory sync, although a power loss can.
+
+`FaultInjectingFileIo` now keeps the directory's durable state separately and restores exactly that
+state on a crash, and every durability operation — write, file sync, delete, directory sync — is a
+crash point. The name of the method that selects one, `crashAtWrite`, is kept for continuity.
+
+**The stricter model found a bug in `truncateSuffixFrom` on its first run.** Truncation deleted the
+later segments, shortened and synced the segment it kept, and only then synced the directory. A
+crash in between brought the deleted segments back while the kept one was already short: segment
+7 followed a segment ending at index 4, recovery reported a gap, and the node refused to start for
+good. The fix is an ordering change and nothing else: delete the later segments and sync the
+directory first, then shorten the kept segment. At every crash point the log is now either the
+old one or the truncated one, and never has a gap. `everyCrashDuringTruncationRecovers` fails
+without the fix.
+
+Tolerating gaps during recovery was considered and rejected. A gap can also mean genuine
+corruption, and silently dropping everything after it could discard acknowledged entries.

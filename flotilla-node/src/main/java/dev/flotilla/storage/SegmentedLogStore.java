@@ -178,16 +178,20 @@ public final class SegmentedLogStore implements DurableLogStore {
             return;
         }
 
+        boolean removedSegments = false;
         while (segments.size() > 1 && segments.getLast().firstIndex() > fromInclusive) {
             LogSegment removed = segments.removeLast();
             removed.close();
             io.delete(removed.path());
+            removedSegments = true;
+        }
+        if (removedSegments) {
+            io.syncDirectory(directory);
         }
         segments.getLast().truncateFrom(fromInclusive);
         if (config.fsyncPolicy() == FsyncPolicy.ALWAYS) {
             sync();
         }
-        io.syncDirectory(directory);
     }
 
     @Override

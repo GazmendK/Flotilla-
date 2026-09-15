@@ -109,6 +109,10 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- A crash during a truncation that spanned several segments could leave the log with a gap, and a
+  node that hit it refused to start for good. Truncation now deletes and syncs away the later
+  segments before shortening the one it keeps. Found once the crash test stopped treating directory
+  changes as instantly durable and started crashing at syncs and deletes as well as writes.
 - A client command the state machine could not decode was proposed anyway and threw on the apply
   thread, which stops the node for good. Commands are now validated before they are proposed.
 - A message addressed to a different node made `RaftNode.step` throw on the event loop, which stops

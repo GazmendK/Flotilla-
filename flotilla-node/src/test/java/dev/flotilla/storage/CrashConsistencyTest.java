@@ -233,4 +233,68 @@ class CrashConsistencyTest {
             }
         }
     }
+
+    private static final long TRUNCATE_FROM = 5;
+
+    private static StorageConfig durableLogConfig() {
+        return StorageConfig.of(DIRECTORY).withFsyncPolicy(FsyncPolicy.ALWAYS).withMaxSegmentBytes(1024);
+    }
+
+    private static List<LogEntry> largeEntries() {
+        List<LogEntry> entries = new ArrayList<>();
+        for (long index = 1; index <= BATCHES * BATCH_SIZE; index++) {
+            entries.add(LogEntry.normal(1, index, Bytes.ofUtf8("value-" + index + "-" + "x".repeat(300))));
+        }
+        return List.copyOf(entries);
+    }
+
+    private static SegmentedLogStore openDurable(FaultInjectingFileIo io) {
+        return SegmentedLogStore.open(StorageDirectory.open(io, DIRECTORY), durableLogConfig());
+    }
+
+    private static boolean truncateCrashingAt(FaultInjectingFileIo io, long crashPoint) {
+        try (SegmentedLogStore store = openDurable(io)) {
+            store.append(largeEntries());
+            store.sync();
+            assertThat(store.segmentCount())
+                    .as("the truncation must cut across several segments to mean anything")
+                    .isGreaterThan(3);
+            io.resetWriteCount();
+            io.crashAtWrite(crashPoint);
+            store.truncateSuffixFrom(TRUNCATE_FROM);
+            return false;
+        } catch (FaultInjectingFileIo.SimulatedCrash crashed) {
+            return true;
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a crash at any durability operation inside a truncation across segments still opens to a valid prefix")
+    void everyCrashDuringTruncationRecovers() {
+        FaultInjectingFileIo counting = new FaultInjectingFileIo();
+        assertThat(truncateCrashingAt(counting, -1)).isFalse();
+        long total = counting.writeCount();
+        assertThat(total)
+                .as("a truncation across segments involves several durability operations")
+                .isGreaterThan(3);
+
+        List<LogEntry> intended = largeEntries();
+        for (long crashPoint = 1; crashPoint <= total; crashPoint++) {
+            FaultInjectingFileIo io = new FaultInjectingFileIo();
+            assertThat(truncateCrashingAt(io, crashPoint)).isTrue();
+            io.clearFaults();
+
+            try (SegmentedLogStore recovered = openDurable(io)) {
+                assertThat(recovered.lastIndex())
+                        .as("crash at operation %d of %d lost entries below the truncation point", crashPoint, total)
+                        .isGreaterThanOrEqualTo(TRUNCATE_FROM - 1);
+                for (long index = 1; index <= recovered.lastIndex(); index++) {
+                    assertThat(recovered.entryAt(index))
+                            .as("crash at operation %d of %d corrupted index %d", crashPoint, total, index)
+                            .contains(intended.get((int) index - 1));
+                }
+            }
+        }
+    }
 }
