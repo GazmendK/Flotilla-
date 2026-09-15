@@ -109,6 +109,13 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- The property-based tests never ran. Every one of them carried JUnit's `@DisplayName`, and jqwik
+  silently skips a property annotated that way — so the record decoder fuzzing, the model-based
+  key-value test and the codec round trips had been reported as skipped since they were written.
+  They are now plain seeded tests that name the seed and attempt in every failure, the two mutation
+  and truncation checks are exhaustive rather than sampled, and jqwik is no longer a dependency. Run
+  for the first time, all of them hold; replacing compare-and-swap with an unconditional write makes
+  the model-based test fail on its first attempt.
 - A crash during a truncation that spanned several segments could leave the log with a gap, and a
   node that hit it refused to start for good. Truncation now deletes and syncs away the later
   segments before shortening the one it keeps. Found once the crash test stopped treating directory

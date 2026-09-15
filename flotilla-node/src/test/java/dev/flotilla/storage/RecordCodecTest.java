@@ -10,11 +10,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.flotilla.core.Bytes;
 import dev.flotilla.core.EntryType;
 import dev.flotilla.core.LogEntry;
+import dev.flotilla.testing.SeededInputs;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import net.jqwik.api.ForAll;
-import net.jqwik.api.Property;
-import net.jqwik.api.constraints.LongRange;
+import java.util.SplittableRandom;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -108,14 +107,19 @@ class RecordCodecTest {
                 .hasMessageContaining("offset 128");
     }
 
-    @Property(tries = 300)
+    @Test
     @DisplayName("arbitrary entries round-trip byte for byte")
-    void arbitraryEntriesRoundTrip(
-            @ForAll @LongRange(min = 0, max = 1_000_000) long term,
-            @ForAll @LongRange(min = 1, max = 1_000_000) long index,
-            @ForAll byte[] payload) {
-        LogEntry entry = LogEntry.normal(term, index, Bytes.copyOf(payload));
+    void arbitraryEntriesRoundTrip() {
+        SplittableRandom random = SeededInputs.random();
+        for (int attempt = 0; attempt < 500; attempt++) {
+            LogEntry entry = LogEntry.normal(
+                    SeededInputs.between(random, 0, 1_000_000),
+                    SeededInputs.between(random, 1, 1_000_000),
+                    Bytes.copyOf(SeededInputs.bytes(random, 512)));
 
-        assertThat(roundTrip(entry)).isEqualTo(entry);
+            assertThat(roundTrip(entry))
+                    .as("seed %d, attempt %d", SeededInputs.SEED, attempt)
+                    .isEqualTo(entry);
+        }
     }
 }

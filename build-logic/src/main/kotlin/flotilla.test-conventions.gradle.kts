@@ -14,7 +14,6 @@ dependencies {
 
     testImplementation(libs.findLibrary("archunit").get())
 
-    testImplementation(libs.findLibrary("jqwik").get())
     testRuntimeOnly(libs.findLibrary("junit-platform-launcher").get())
 }
 

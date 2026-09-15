@@ -9,12 +9,12 @@ page is what that means concretely.
 |---|---|---|
 | Unit tests | Does this type behave as specified at its boundaries? | `flotilla-core` |
 | Paper tests | Does the implementation match the figures it claims to implement? | `Figure7Test`, `Figure8Test` |
-| Property tests | Does this hold for arbitrary inputs, not just the ones I thought of? | jqwik in `BytesTest` |
+| Property tests | Does this hold for arbitrary inputs, not just the ones I thought of? | Seeded randomized tests (`SeededInputs`, `ModelBasedKvTest`); exhaustive where the input space is small enough, as for every single-byte mutation of a record |
 | Architecture tests | Are the structural guarantees still true? | `CoreArchitectureTest`, `NodeLayeringTest`, `SimulationIsolationTest` |
 | Deterministic simulation | Does safety hold under adversarial schedules nobody wrote down? | `flotilla-testing` |
 | Checker tests | Do the checkers themselves detect the thing they claim to detect? | `InvariantTest` |
 | Crash-consistency tests | Does durability survive a crash at every write, sync, delete and directory sync? | `CrashConsistencyTest` |
-| Fuzzing | Does the decoder survive arbitrary bytes without allocating or throwing wildly? | `RecordCodecFuzzTest` |
+| Fuzzing | Does the decoder survive arbitrary bytes without allocating or throwing wildly? | `RecordCodecFuzzTest`, seeded, so a failure names the seed and attempt that reproduce it |
 | Linearizability checking | Is the observable history actually linearizable? | Phase 11 |
 | Integration tests | Does it work with real processes, sockets and files? | Phase 9 |
 

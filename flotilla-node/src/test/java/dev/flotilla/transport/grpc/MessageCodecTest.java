@@ -20,16 +20,13 @@ import dev.flotilla.core.message.ReadIndexResponse;
 import dev.flotilla.core.message.RequestVoteRequest;
 import dev.flotilla.core.message.RequestVoteResponse;
 import dev.flotilla.core.message.TimeoutNowRequest;
+import dev.flotilla.testing.SeededInputs;
 import dev.flotilla.wire.v1.DeliverRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.SplittableRandom;
 import java.util.stream.Collectors;
-import net.jqwik.api.ForAll;
-import net.jqwik.api.Property;
-import net.jqwik.api.constraints.LongRange;
-import net.jqwik.api.constraints.Size;
-import net.jqwik.api.constraints.StringLength;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -138,19 +135,23 @@ class MessageCodecTest {
         assertThatThrownBy(() -> MessageCodec.decode(request)).isInstanceOf(WireFormatException.class);
     }
 
-    @Property(tries = 500)
+    @Test
     @DisplayName("an append of any shape comes back identical after real serialization")
-    void appendRequestsRoundTripThroughBytes(
-            @ForAll @LongRange(min = 1, max = 1_000_000) long term,
-            @ForAll @LongRange(min = 0, max = 1_000_000) long prevIndex,
-            @ForAll @Size(max = 20) List<@StringLength(max = 64) String> payloads)
-            throws Exception {
-        List<LogEntry> entries = new ArrayList<>();
-        for (int i = 0; i < payloads.size(); i++) {
-            entries.add(LogEntry.normal(term, prevIndex + 1 + i, Bytes.ofUtf8(payloads.get(i))));
-        }
-        AppendEntriesRequest original = new AppendEntriesRequest(A, B, term, prevIndex, term, entries, prevIndex);
+    void appendRequestsRoundTripThroughBytes() throws Exception {
+        SplittableRandom random = SeededInputs.random();
+        for (int attempt = 0; attempt < 500; attempt++) {
+            long term = SeededInputs.between(random, 1, 1_000_000);
+            long prevIndex = SeededInputs.between(random, 0, 1_000_000);
+            int count = random.nextInt(0, 21);
+            List<LogEntry> entries = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                entries.add(LogEntry.normal(term, prevIndex + 1 + i, Bytes.copyOf(SeededInputs.bytes(random, 64))));
+            }
+            AppendEntriesRequest original = new AppendEntriesRequest(A, B, term, prevIndex, term, entries, prevIndex);
 
-        assertThat(throughTheWire(original)).isEqualTo(original);
+            assertThat(throughTheWire(original))
+                    .as("seed %d, attempt %d", SeededInputs.SEED, attempt)
+                    .isEqualTo(original);
+        }
     }
 }

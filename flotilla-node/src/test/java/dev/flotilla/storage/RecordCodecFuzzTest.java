@@ -8,13 +8,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.flotilla.core.Bytes;
 import dev.flotilla.core.LogEntry;
+import dev.flotilla.testing.SeededInputs;
 import java.util.Arrays;
-import net.jqwik.api.ForAll;
-import net.jqwik.api.Property;
-import net.jqwik.api.constraints.IntRange;
+import java.util.SplittableRandom;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 class RecordCodecFuzzTest {
+
+    private static final int TRIES = 5000;
 
     private static byte[] frameOf(byte[] record) {
         return Arrays.copyOfRange(record, 0, RecordCodec.FRAME_BYTES);
@@ -24,75 +26,92 @@ class RecordCodecFuzzTest {
         return Arrays.copyOfRange(record, RecordCodec.FRAME_BYTES, record.length);
     }
 
-    @Property(tries = 5000)
+    @Test
     @DisplayName("arbitrary bytes make the decoder report corruption, never anything else")
-    void decodingArbitraryBytesOnlyReportsCorruption(@ForAll byte[] body) {
-        try {
-            RecordCodec.decode(body, "fuzz", 0);
-        } catch (CorruptionException expected) {
-            return;
+    void decodingArbitraryBytesOnlyReportsCorruption() {
+        SplittableRandom random = SeededInputs.random();
+        for (int attempt = 0; attempt < TRIES; attempt++) {
+            byte[] body = SeededInputs.bytes(random, 256);
+            try {
+                RecordCodec.decode(body, "fuzz", 0);
+            } catch (CorruptionException expected) {
+                assertThat(expected).hasMessageContaining("fuzz");
+            } catch (RuntimeException unexpected) {
+                throw new AssertionError(
+                        "seed " + SeededInputs.SEED + ", attempt " + attempt + ": decoding " + body.length
+                                + " arbitrary bytes threw " + unexpected,
+                        unexpected);
+            }
         }
     }
 
-    @Property(tries = 5000)
+    @Test
     @DisplayName("the framing helpers never throw, whatever the disk contains")
-    void framingHelpersNeverThrow(@ForAll byte[] raw, @ForAll byte[] body) {
-        byte[] frame = Arrays.copyOf(raw, RecordCodec.FRAME_BYTES);
+    void framingHelpersNeverThrow() {
+        SplittableRandom random = SeededInputs.random();
+        for (int attempt = 0; attempt < TRIES; attempt++) {
+            byte[] frame = Arrays.copyOf(SeededInputs.bytes(random, 32), RecordCodec.FRAME_BYTES);
+            byte[] body = SeededInputs.bytes(random, 256);
 
-        int length = RecordCodec.declaredBodyLength(frame);
+            int length = RecordCodec.declaredBodyLength(frame);
 
-        assertThat(length).isLessThanOrEqualTo(RecordCodec.MAX_BODY_BYTES);
-        RecordCodec.checksumMatches(frame, body);
+            assertThat(length)
+                    .as("seed %d, attempt %d", SeededInputs.SEED, attempt)
+                    .isLessThanOrEqualTo(RecordCodec.MAX_BODY_BYTES);
+            boolean _ = RecordCodec.checksumMatches(frame, body);
+        }
     }
 
-    @Property(tries = 5000)
+    @Test
     @DisplayName("a corrupted length is never large enough to be allocated blindly")
-    void aCorruptedLengthIsAlwaysBounded(@ForAll byte[] raw) {
-        byte[] frame = Arrays.copyOf(raw, RecordCodec.FRAME_BYTES);
+    void aCorruptedLengthIsAlwaysBounded() {
+        SplittableRandom random = SeededInputs.random();
+        for (int attempt = 0; attempt < TRIES; attempt++) {
+            byte[] frame = Arrays.copyOf(SeededInputs.bytes(random, 32), RecordCodec.FRAME_BYTES);
 
-        int length = RecordCodec.declaredBodyLength(frame);
+            int length = RecordCodec.declaredBodyLength(frame);
 
-        assertThat(length == -1 || (length > 0 && length <= RecordCodec.MAX_BODY_BYTES))
-                .as("declared length %d escaped its bounds", length)
-                .isTrue();
+            assertThat(length == -1 || (length > 0 && length <= RecordCodec.MAX_BODY_BYTES))
+                    .as(
+                            "seed %d, attempt %d: declared length %d escaped its bounds",
+                            SeededInputs.SEED, attempt, length)
+                    .isTrue();
+        }
     }
 
-    @Property(tries = 3000)
-    @DisplayName("mutating any byte of a valid record is detected before it is believed")
-    void anyMutationIsDetected(@ForAll @IntRange(min = 0, max = 10_000) int position, @ForAll byte mask) {
-        if (mask == 0) {
-            return;
+    @Test
+    @DisplayName("flipping any bits of any single byte of a valid record is detected, checked exhaustively")
+    void everySingleByteMutationIsDetected() {
+        byte[] original = RecordCodec.encode(LogEntry.normal(3, 7, Bytes.ofUtf8("a payload worth checking")));
+
+        for (int position = 0; position < original.length; position++) {
+            for (int mask = 1; mask <= 0xFF; mask++) {
+                byte[] record = original.clone();
+                record[position] ^= (byte) mask;
+
+                byte[] frame = frameOf(record);
+                byte[] body = bodyOf(record);
+                boolean detected = RecordCodec.declaredBodyLength(frame) != body.length
+                        || !RecordCodec.checksumMatches(frame, body);
+
+                assertThat(detected)
+                        .as("flipping mask 0x%02X at byte %d passed the checksum unnoticed", mask, position)
+                        .isTrue();
+            }
         }
-        LogEntry entry = LogEntry.normal(3, 7, Bytes.ofUtf8("a payload worth checking"));
-        byte[] record = RecordCodec.encode(entry);
-        record[position % record.length] ^= mask;
-
-        byte[] frame = frameOf(record);
-        byte[] body = bodyOf(record);
-        boolean detected =
-                RecordCodec.declaredBodyLength(frame) != body.length || !RecordCodec.checksumMatches(frame, body);
-
-        assertThat(detected)
-                .as("a mutation at byte %d passed the checksum unnoticed", position % record.length)
-                .isTrue();
     }
 
-    @Property(tries = 2000)
-    @DisplayName("truncating a valid record at any point is detected")
-    void truncationIsDetected(@ForAll @IntRange(min = 0, max = 10_000) int cut) {
-        LogEntry entry = LogEntry.normal(5, 11, Bytes.ofUtf8("payload"));
-        byte[] record = RecordCodec.encode(entry);
-        int keep = cut % record.length;
-        byte[] truncated = Arrays.copyOf(record, keep);
+    @Test
+    @DisplayName("truncating a valid record at every possible length is detected, checked exhaustively")
+    void everyTruncationIsDetected() {
+        byte[] record = RecordCodec.encode(LogEntry.normal(5, 11, Bytes.ofUtf8("payload")));
 
-        if (truncated.length < RecordCodec.FRAME_BYTES) {
-            return;
+        for (int keep = RecordCodec.FRAME_BYTES; keep < record.length; keep++) {
+            byte[] truncated = Arrays.copyOf(record, keep);
+
+            assertThat(RecordCodec.declaredBodyLength(frameOf(truncated)))
+                    .as("a record cut to %d of %d bytes must not appear complete", keep, record.length)
+                    .isNotEqualTo(bodyOf(truncated).length);
         }
-        byte[] frame = frameOf(truncated);
-        byte[] body = bodyOf(truncated);
-
-        assertThat(RecordCodec.declaredBodyLength(frame))
-                .as("a truncated record must not appear complete")
-                .isNotEqualTo(body.length);
     }
 }
