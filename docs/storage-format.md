@@ -217,5 +217,18 @@ Windows that throws, and the first time it does the storage layer logs once and 
 relying on the file system's own metadata ordering. This is why the CI matrix includes Windows:
 the difference is real, it is silent, and it only shows up in the platform nobody tested.
 
-`fsync` can be disabled entirely (`FsyncPolicy.NEVER`). That is for benchmarks and tests only,
-and any number measured that way is meaningless without saying so.
+How often the log is forced is a policy:
+
+| Policy | Log | Hard state | For |
+|---|---|---|---|
+| `BATCHED` (default) | forced only when `sync()` is called | forced on every write | a running node: the event loop calls `sync()` once per batch, which is what makes group commit physical |
+| `ALWAYS` | forced after every append and truncation, and on `sync()` | forced on every write | a store used without an event loop to batch for it |
+| `NEVER` | never forced, not even on `sync()` | never forced | benchmarks and tests only |
+
+`ALWAYS` in a running node defeats group commit completely: the consensus core appends each
+proposal as it arrives, so each append pays its own `fsync` before the event loop has anything to
+batch. Structural durability points — rolling to a new segment, the truncation inside a reset, the
+log base — are forced under both `ALWAYS` and `BATCHED`, because the crash-safety arguments above
+depend on them.
+
+Any number measured under `NEVER` is meaningless without saying so.

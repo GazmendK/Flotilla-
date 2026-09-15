@@ -166,6 +166,10 @@ public final class RaftServer implements AutoCloseable {
         return engine.syncs();
     }
 
+    public long forcedLogSyncs() {
+        return log.forcedSyncs();
+    }
+
     public long persistedEntries() {
         return engine.persistedEntries();
     }

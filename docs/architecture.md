@@ -135,8 +135,8 @@ field declaration rather than by reasoning about interleavings.
 Persistence stays on the loop; applying committed entries does not. A second thread owns the state
 machine and completes proposal futures, so a stuck state machine can no longer stop consensus. The
 `fsync` cost is handled by batching rather than by a third thread — the loop drains up to
-`maxBatchSize` events before producing one `Ready`, which measured 33 `fsync` calls for 2001
-entries.
+`maxBatchSize` events before producing one `Ready`, which measured 33 physical `fsync` calls for
+2001 entries under the default `FsyncPolicy.BATCHED`.
 
 Every queue is bounded, and each kind of work states what happens when its queue is full:
 

@@ -24,6 +24,7 @@ public final class SegmentedLogStore implements DurableLogStore {
     private long discardedBytesOnRecovery;
     private int unfinishedSegments;
     private int compactedSegments;
+    private long forcedSyncs;
 
     private SegmentedLogStore(FileIo io, Path directory, StorageConfig config, LogBase base) {
         this.io = io;
@@ -105,6 +106,10 @@ public final class SegmentedLogStore implements DurableLogStore {
 
     public int compactedSegmentsOnRecovery() {
         return compactedSegments;
+    }
+
+    public long forcedSyncs() {
+        return forcedSyncs;
     }
 
     @Override
@@ -274,7 +279,7 @@ public final class SegmentedLogStore implements DurableLogStore {
 
     @Override
     public void sync() {
-        segments.getLast().sync();
+        force(segments.getLast());
     }
 
     @Override
@@ -288,6 +293,14 @@ public final class SegmentedLogStore implements DurableLogStore {
         segments.clear();
     }
 
+    private void force(LogSegment segment) {
+        if (config.fsyncPolicy() == FsyncPolicy.NEVER) {
+            return;
+        }
+        segment.sync();
+        forcedSyncs++;
+    }
+
     private LogSegment activeSegment() {
         return segments.getLast();
     }
@@ -297,7 +310,7 @@ public final class SegmentedLogStore implements DurableLogStore {
         if (active.sizeBytes() < config.maxSegmentBytes()) {
             return;
         }
-        active.sync();
+        force(active);
         segments.add(LogSegment.create(io, directory, active.lastIndex() + 1));
         io.syncDirectory(directory);
     }

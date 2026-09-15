@@ -21,7 +21,7 @@ public record StorageConfig(Path directory, long maxSegmentBytes, FsyncPolicy fs
     }
 
     public static StorageConfig of(Path directory) {
-        return new StorageConfig(directory, DEFAULT_MAX_SEGMENT_BYTES, FsyncPolicy.ALWAYS);
+        return new StorageConfig(directory, DEFAULT_MAX_SEGMENT_BYTES, FsyncPolicy.BATCHED);
     }
 
     public StorageConfig withMaxSegmentBytes(long bytes) {

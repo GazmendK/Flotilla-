@@ -56,18 +56,22 @@ The event loop takes one event, then drains up to `maxBatchSize - 1` more from t
 producing a single `Ready`. A burst of proposals therefore costs one `fsync` between them all
 instead of one each.
 
-Measured on the single-node path with `FsyncPolicy.ALWAYS`, 2000 proposals submitted without
-waiting:
+Measured on the single-node path with the default `FsyncPolicy.BATCHED`, 2000 proposals submitted
+without waiting, counting physical forces of the log file:
 
 | | |
 |---|---|
 | entries persisted | 2001 |
-| `fsync` calls | 33 |
+| physical `fsync` calls | 33 |
 | entries per `fsync` | 60 |
 | largest batch | 64 (the configured cap) |
 
-`GroupCommitTest` asserts that ratio, and its second test sets `maxBatchSize = 1` to show the
-comparison is real: batching disabled, the same workload pays one `fsync` per entry.
+`GroupCommitTest` asserts that ratio on the physical count. Its second test sets `maxBatchSize = 1`
+to show the comparison is real — batching disabled, the same workload pays one `fsync` per entry —
+and its third runs under `FsyncPolicy.ALWAYS`, where the store forces after every append and no
+amount of batching in the event loop helps. The first published version of this table counted the
+event loop's `sync()` calls under `ALWAYS` instead, which was 33 in the counter and one per entry on
+the disk; [ADR-0018](adr/0018-apply-off-the-loop-fsync-on-it.md) records how that was found.
 
 Batching does not weaken any ordering rule. Messages still leave only after the hard state and the
 log are durable, because that ordering lives inside `processReady()` and a batch produces exactly

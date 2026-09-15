@@ -118,6 +118,13 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- Group commit had no physical effect with the default storage policy. `FsyncPolicy.ALWAYS` forced
+  the log after every append, and the consensus core appends each proposal as it steps it — so every
+  proposal paid its own `fsync` before the event loop could batch anything, and the published "33
+  fsyncs for 2001 entries" counted the loop's calls rather than the disk's forces. A new default,
+  `FsyncPolicy.BATCHED`, forces the log only on `sync()` and the hard state on every write; the store
+  counts physical forces, and the group commit test now asserts on those. Found through a CI timeout
+  on a runner with a slow disk. `NEVER` now means never, including `sync()`.
 - The property-based tests never ran. Every one of them carried JUnit's `@DisplayName`, and jqwik
   silently skips a property annotated that way — so the record decoder fuzzing, the model-based
   key-value test and the codec round trips had been reported as skipped since they were written.

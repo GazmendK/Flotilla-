@@ -26,7 +26,7 @@ class CrashConsistencyTest {
     private static final int BATCH_SIZE = 3;
 
     private static StorageConfig logConfig() {
-        return StorageConfig.of(DIRECTORY).withFsyncPolicy(FsyncPolicy.NEVER).withMaxSegmentBytes(1024);
+        return StorageConfig.of(DIRECTORY).withFsyncPolicy(FsyncPolicy.BATCHED).withMaxSegmentBytes(1024);
     }
 
     private static StorageConfig stateConfig() {

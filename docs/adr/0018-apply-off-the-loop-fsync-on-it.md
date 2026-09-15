@@ -36,8 +36,9 @@ that motivated the move.
 
 So one thread owns the log completely, and the `fsync` count is reduced by **group commit through
 batching**: the loop drains up to `maxBatchSize` events before producing a single `Ready`. Measured
-on 2000 proposals with `FsyncPolicy.ALWAYS`, that is 33 `fsync` calls for 2001 entries — 60 entries
-per sync. Batching does not weaken any ordering rule, because the "persist, then send" sequence
+on 2000 proposals with `FsyncPolicy.BATCHED`, that is 33 physical `fsync` calls for 2001 entries —
+60 entries per sync. (See the amendment below: the first version of this measurement counted the
+wrong thing.) Batching does not weaken any ordering rule, because the "persist, then send" sequence
 lives inside one `Ready` and a batch produces exactly one of those.
 
 ## Alternatives considered
@@ -74,3 +75,20 @@ instead, and that block is the mechanism by which backpressure reaches the clien
   local list, so an exception mid-batch stranded every proposal behind it — futures that were
   neither in the queue nor in the registry, waiting forever. The batch is now swept on the way out.
   Both were found by the shutdown-under-load test, and both were invisible before batching existed.
+
+## Amendment — 2026-09-15: the measurement counted calls, not fsyncs
+
+The original measurement used `FsyncPolicy.ALWAYS` and counted how often the event loop called
+`log.sync()`. Under `ALWAYS`, though, the segmented log forces the file after **every append**, and
+the consensus core appends each proposal the moment it steps it — before the event loop has produced
+a `Ready`, let alone batched one. Every proposal paid its own physical `fsync`; the loop's single
+`sync()` per batch came on top. Group commit was real in the counter and absent on the disk.
+
+It surfaced as a timeout, not as a wrong number: on a CI runner with a slow disk, 2000 proposals
+took longer than thirty seconds, which thirty-three fsyncs never would.
+
+The fix is a policy, not a code path. `FsyncPolicy.BATCHED` — now the default — forces the log only
+when `sync()` is called, while the hard state is still forced on every write. The store counts
+physical forces, `GroupCommitTest` asserts on that count, and a third test pins down the failure
+mode: under `ALWAYS`, two hundred proposals cost at least two hundred forces. Re-measured on the
+same workload with `BATCHED`, the number is again 33 for 2001 entries — this time on the disk.

@@ -6,5 +6,6 @@ package dev.flotilla.storage;
 
 public enum FsyncPolicy {
     ALWAYS,
+    BATCHED,
     NEVER
 }
