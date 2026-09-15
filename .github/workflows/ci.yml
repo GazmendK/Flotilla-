@@ -73,7 +73,33 @@ jobs:
       - name: Build, analyse and test
         # `build` runs compilation, Error Prone, NullAway, spotlessCheck and the tests.
         # It is exactly what CONTRIBUTING tells contributors to run locally.
-        run: ./gradlew build --stacktrace
+        run: ./gradlew build --stacktrace 2>&1 | tee build.log
+
+      - name: Report failures as annotations
+        # Annotations are visible on the commit and the pull request without opening the log, so a
+        # failure on one platform is readable at a glance. The shell sets pipefail, so the step above
+        # still fails when Gradle does.
+        if: failure()
+        run: |
+          PYTHON=$(command -v python3 || command -v python)
+          "$PYTHON" - <<'PY'
+          import glob, re, xml.etree.ElementTree as ET
+          for path in glob.glob("**/build/test-results/test/*.xml", recursive=True):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  for problem in case.findall("failure") + case.findall("error"):
+                      message = " ".join((problem.get("message") or problem.text or "").split())[:600]
+                      print(f"::error title={case.get('classname')}::{case.get('name')}: {message}")
+          try:
+              log = open("build.log", encoding="utf-8", errors="replace").read().splitlines()
+          except FileNotFoundError:
+              log = []
+          for line in log:
+              if re.search(r"\.java:\d+: (error|warning)|> Task \S+ FAILED", line):
+                  print(f"::error title=build::{line.strip()[:600]}")
+          for i, line in enumerate(log):
+              if line.startswith("* What went wrong:"):
+                  print("::error title=gradle::" + " ".join(l.strip() for l in log[i + 1:i + 6])[:600])
+          PY
 
       - name: Javadoc
         # Doclint is configured to fail on broken references. Once per matrix is enough.
