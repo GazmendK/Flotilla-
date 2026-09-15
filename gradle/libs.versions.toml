@@ -8,7 +8,7 @@ java = "25"
 # Static analysis / formatting
 errorprone = "2.50.0"
 errorpronePlugin = "5.1.0"
-nullaway = "0.13.8"
+nullaway = "0.14.1"
 jspecify = "1.0.1"
 spotless = "8.9.0"
 palantirJavaFormat = "2.96.0"
