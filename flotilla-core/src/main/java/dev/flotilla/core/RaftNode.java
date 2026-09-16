@@ -23,6 +23,7 @@ import dev.flotilla.core.state.Leader;
 import dev.flotilla.core.state.Progress;
 import dev.flotilla.core.state.ProgressState;
 import dev.flotilla.core.state.RaftState;
+import dev.flotilla.core.state.ReadIndexQueue;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -42,6 +43,7 @@ public final class RaftNode {
 
     private final List<RaftMessage> outbox = new ArrayList<>();
     private final List<LogEntry> unpersisted = new ArrayList<>();
+    private final List<ReadState> readStates = new ArrayList<>();
 
     private RaftState state;
     private long currentTerm;
@@ -52,6 +54,7 @@ public final class RaftNode {
     private long commitIndex;
     private long emittedCommitIndex;
     private int heartbeatElapsedTicks;
+    private long ticksSinceStart;
 
     @Nullable
     private Snapshot pendingSnapshot;
@@ -135,6 +138,86 @@ public final class RaftNode {
         return true;
     }
 
+    @RaftSpec(value = "§6.4 Processing read-only queries more efficiently", source = RaftSpec.Source.DISSERTATION)
+    public boolean readIndex(Bytes requestId) {
+        Objects.requireNonNull(requestId, "requestId");
+        return switch (state) {
+            case Leader leader -> {
+                leader.reads().enqueue(new ReadIndexQueue.PendingRead(requestId, null));
+                startReadRoundIfPossible(leader);
+                yield true;
+            }
+            case Follower follower -> {
+                NodeId knownLeader = follower.leaderId();
+                if (knownLeader == null) {
+                    yield false;
+                }
+                send(new ReadIndexRequest(id(), knownLeader, currentTerm, requestId));
+                yield true;
+            }
+            case Candidate ignored -> false;
+        };
+    }
+
+    @RaftSpec(
+            value = "§6.4.1 Using clocks to reduce messaging for read-only queries",
+            source = RaftSpec.Source.DISSERTATION)
+    public boolean leaseRead(Bytes requestId) {
+        Objects.requireNonNull(requestId, "requestId");
+        if (state instanceof Leader leader
+                && config.leaseReads()
+                && hasCommittedInCurrentTerm()
+                && holdsLease(leader)) {
+            readStates.add(new ReadState(requestId, commitIndex));
+            return true;
+        }
+        return readIndex(requestId);
+    }
+
+    private boolean holdsLease(Leader leader) {
+        long confirmed = leader.quorumAckedRound(cluster.voters(), id(), cluster.quorum());
+        return leader.ticksSinceRoundWasSent(confirmed) < config.leaseTicks();
+    }
+
+    private boolean hasCommittedInCurrentTerm() {
+        return log.termAt(commitIndex) == currentTerm;
+    }
+
+    private void startReadRoundIfPossible(Leader leader) {
+        if (!leader.reads().canStartRound() || !hasCommittedInCurrentTerm()) {
+            return;
+        }
+        leader.reads().startRound(leader.round() + 1, commitIndex);
+        broadcastHeartbeat(leader);
+        releaseConfirmedReads(leader);
+    }
+
+    private void releaseConfirmedReads(Leader leader) {
+        long confirmed = leader.quorumAckedRound(cluster.voters(), id(), cluster.quorum());
+        for (ReadIndexQueue.ConfirmedRead read : leader.reads().confirmThrough(confirmed)) {
+            NodeId origin = read.origin();
+            if (origin == null) {
+                readStates.add(new ReadState(read.requestId(), read.readIndex()));
+            } else {
+                send(new ReadIndexResponse(id(), origin, currentTerm, read.requestId(), read.readIndex()));
+            }
+        }
+        startReadRoundIfPossible(leader);
+    }
+
+    private void handleReadIndexRequest(ReadIndexRequest request) {
+        if (state instanceof Leader leader) {
+            leader.reads().enqueue(new ReadIndexQueue.PendingRead(request.requestId(), request.from()));
+            startReadRoundIfPossible(leader);
+        }
+    }
+
+    private void handleReadIndexResponse(ReadIndexResponse response) {
+        if (state instanceof Follower) {
+            readStates.add(new ReadState(response.requestId(), response.readIndex()));
+        }
+    }
+
     @RaftSpec("§7 Log compaction")
     public void compactLog(long throughIndex) {
         long covered = snapshots.latest().map(Snapshot::lastIncludedIndex).orElse(0L);
@@ -152,6 +235,9 @@ public final class RaftNode {
     }
 
     public void tick() {
+        if (ticksSinceStart < Long.MAX_VALUE) {
+            ticksSinceStart++;
+        }
         switch (state) {
             case Leader leader -> tickLeader(leader);
             case Follower ignored -> tickElectionTimeout();
@@ -168,6 +254,9 @@ public final class RaftNode {
         builder.persistAll(unpersisted);
         for (RaftMessage message : outbox) {
             builder.send(message);
+        }
+        for (ReadState readState : readStates) {
+            builder.readState(readState);
         }
         if (pendingSnapshot != null) {
             builder.install(pendingSnapshot);
@@ -190,6 +279,7 @@ public final class RaftNode {
     public void advance() {
         outbox.clear();
         unpersisted.clear();
+        readStates.clear();
         pendingSnapshot = null;
         emittedCommitIndex = commitIndex;
         publishedHardState = currentHardState();
@@ -223,8 +313,8 @@ public final class RaftNode {
             case InstallSnapshotRequest request -> handleInstallSnapshot(request);
             case InstallSnapshotResponse response -> handleInstallSnapshotResponse(response);
             case TimeoutNowRequest ignored -> {}
-            case ReadIndexRequest ignored -> {}
-            case ReadIndexResponse ignored -> {}
+            case ReadIndexRequest request -> handleReadIndexRequest(request);
+            case ReadIndexResponse response -> handleReadIndexResponse(response);
         }
     }
 
@@ -250,7 +340,7 @@ public final class RaftNode {
             case RequestVoteRequest request ->
                 send(new RequestVoteResponse(id(), request.from(), currentTerm, false, request.preVote()));
             case AppendEntriesRequest request ->
-                send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, 0, 0));
+                send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, 0, 0, 0));
             case InstallSnapshotRequest request ->
                 send(new InstallSnapshotResponse(id(), request.from(), currentTerm, 0, false));
             default -> {}
@@ -265,6 +355,7 @@ public final class RaftNode {
     }
 
     private void tickLeader(Leader leader) {
+        leader.tick();
         heartbeatElapsedTicks++;
         electionTimer.tick();
         resendSnapshotsThatWentUnanswered(leader);
@@ -345,7 +436,9 @@ public final class RaftNode {
         boolean mayVote = request.preVote()
                 ? request.term() > currentTerm
                 : (votedFor == null && leaderId() == null) || request.from().equals(votedFor);
-        boolean granted = mayVote && isAtLeastAsUpToDate(request.lastLogIndex(), request.lastLogTerm());
+        boolean granted = mayVote
+                && !isInStartupQuietPeriod()
+                && isAtLeastAsUpToDate(request.lastLogIndex(), request.lastLogTerm());
 
         if (granted && !request.preVote()) {
             votedFor = request.from();
@@ -354,6 +447,13 @@ public final class RaftNode {
 
         long responseTerm = granted ? request.term() : currentTerm;
         send(new RequestVoteResponse(id(), request.from(), responseTerm, granted, request.preVote()));
+    }
+
+    @RaftSpec(
+            value = "§6.4.1 Using clocks to reduce messaging for read-only queries",
+            source = RaftSpec.Source.DISSERTATION)
+    private boolean isInStartupQuietPeriod() {
+        return config.leaseReads() && ticksSinceStart < config.electionTimeoutMinTicks();
     }
 
     private void handleRequestVoteResponse(RequestVoteResponse response) {
@@ -374,13 +474,14 @@ public final class RaftNode {
         becomeFollower(currentTerm, request.from());
 
         long prevIndex = request.prevLogIndex();
+        long round = request.round();
         long snapshotIndex = log.firstIndex() - 1;
         if (prevIndex < snapshotIndex) {
-            send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, snapshotIndex));
+            send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, snapshotIndex, round));
             return;
         }
         if (prevIndex > log.lastIndex()) {
-            send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, log.lastIndex() + 1, 0));
+            send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, log.lastIndex() + 1, 0, round));
             return;
         }
         long localPrevTerm = log.termAt(prevIndex);
@@ -390,13 +491,14 @@ public final class RaftNode {
                     request.from(),
                     currentTerm,
                     firstIndexOfTermEndingAt(prevIndex, localPrevTerm),
-                    localPrevTerm));
+                    localPrevTerm,
+                    round));
             return;
         }
 
         long lastNewIndex = storeEntries(request.entries(), prevIndex);
         advanceFollowerCommit(request.leaderCommit(), lastNewIndex);
-        send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, lastNewIndex));
+        send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, lastNewIndex, round));
     }
 
     @RaftSpec("Figure 13, InstallSnapshot RPC")
@@ -465,6 +567,8 @@ public final class RaftNode {
             return;
         }
         progress.recordReply();
+        leader.recordAck(response.from(), response.round());
+        releaseConfirmedReads(leader);
 
         if (response.success()) {
             boolean advanced = progress.maybeUpdate(response.matchIndex());
@@ -564,6 +668,7 @@ public final class RaftNode {
 
         if (replicatedOnQuorum > commitIndex && log.termAt(replicatedOnQuorum) == currentTerm) {
             commitIndex = replicatedOnQuorum;
+            startReadRoundIfPossible(leader);
         }
     }
 
@@ -611,10 +716,11 @@ public final class RaftNode {
     }
 
     private void broadcastHeartbeat(Leader leader) {
+        long round = leader.nextRound();
         for (Map.Entry<NodeId, Progress> peer : leader.peers().entrySet()) {
             long prevIndex = Math.max(peer.getValue().matchIndex(), log.firstIndex() - 1);
             send(new AppendEntriesRequest(
-                    id(), peer.getKey(), currentTerm, prevIndex, log.termAt(prevIndex), List.of(), commitIndex));
+                    id(), peer.getKey(), currentTerm, prevIndex, log.termAt(prevIndex), List.of(), commitIndex, round));
         }
     }
 
@@ -641,7 +747,7 @@ public final class RaftNode {
     }
 
     private void sendAppend(NodeId peer, Progress progress) {
-        if (progress.isThrottled(config.maxInflightAppends())) {
+        if (!(state instanceof Leader leader) || progress.isThrottled(config.maxInflightAppends())) {
             return;
         }
         long prevIndex = progress.nextIndex() - 1;
@@ -650,7 +756,8 @@ public final class RaftNode {
                 ? List.of()
                 : log.entriesFrom(progress.nextIndex(), maxEntries, config.maxAppendBytes());
 
-        send(new AppendEntriesRequest(id(), peer, currentTerm, prevIndex, log.termAt(prevIndex), entries, commitIndex));
+        send(new AppendEntriesRequest(
+                id(), peer, currentTerm, prevIndex, log.termAt(prevIndex), entries, commitIndex, leader.round()));
         progress.recordSend();
     }
 

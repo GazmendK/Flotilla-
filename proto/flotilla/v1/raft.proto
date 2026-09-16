@@ -49,6 +49,8 @@ message AppendEntriesRequest {
   int64 prev_log_term = 2;
   repeated LogEntry entries = 3;
   int64 leader_commit = 4;
+  // Echoed by the follower, so the leader can tell which of its messages a reply answers.
+  int64 round = 5;
 }
 
 message AppendEntriesResponse {
@@ -56,6 +58,7 @@ message AppendEntriesResponse {
   int64 match_index = 2;
   int64 conflict_index = 3;
   int64 conflict_term = 4;
+  int64 round = 5;
 }
 
 message RequestVoteRequest {

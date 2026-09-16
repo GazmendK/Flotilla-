@@ -12,6 +12,16 @@ not stable before 1.0.0.
 
 ### Added
 
+- ReadIndex in the consensus core: a leader answers a read without writing to the log once a
+  majority has acknowledged a heartbeat round sent *after* the read arrived, and only after it has
+  committed an entry of its own term. Reads that arrive while a round is in flight share the next one,
+  and a follower forwards a read to the leader and serves it locally. Acknowledgements are matched to
+  rounds carried on every `AppendEntries` message; counting any reply instead releases a read on the
+  strength of a heartbeat sent before it, which `ReadIndexTest` shows.
+- Lease reads, off by default. The lease is shortened by a configured clock-drift bound, requires
+  CheckQuorum, and a node that has just started refuses to vote for one election timeout — otherwise
+  a crashed follower forgets the lease it granted and votes for a new leader while the old one still
+  answers reads.
 - A linearizability checker, written for this project and depending on nothing but the JDK. It
   follows Porcupine's search, checks each key independently, treats a timed-out operation as one
   that may or may not have happened, and reports UNKNOWN when it runs out of time instead of passing.

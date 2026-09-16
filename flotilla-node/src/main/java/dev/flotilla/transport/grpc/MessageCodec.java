@@ -45,7 +45,8 @@ public final class MessageCodec {
                         dev.flotilla.wire.v1.AppendEntriesRequest.newBuilder()
                                 .setPrevLogIndex(request.prevLogIndex())
                                 .setPrevLogTerm(request.prevLogTerm())
-                                .setLeaderCommit(request.leaderCommit());
+                                .setLeaderCommit(request.leaderCommit())
+                                .setRound(request.round());
                 for (LogEntry entry : request.entries()) {
                     body.addEntries(encode(entry));
                 }
@@ -56,7 +57,8 @@ public final class MessageCodec {
                         .setSuccess(response.success())
                         .setMatchIndex(response.matchIndex())
                         .setConflictIndex(response.conflictIndex())
-                        .setConflictTerm(response.conflictTerm()));
+                        .setConflictTerm(response.conflictTerm())
+                        .setRound(response.round()));
             case RequestVoteRequest request ->
                 envelope.setRequestVoteRequest(dev.flotilla.wire.v1.RequestVoteRequest.newBuilder()
                         .setLastLogIndex(request.lastLogIndex())
@@ -104,7 +106,8 @@ public final class MessageCodec {
                             body.getPrevLogIndex(),
                             body.getPrevLogTerm(),
                             entries,
-                            body.getLeaderCommit());
+                            body.getLeaderCommit(),
+                            body.getRound());
                 }
                 case APPEND_ENTRIES_RESPONSE -> {
                     dev.flotilla.wire.v1.AppendEntriesResponse body = envelope.getAppendEntriesResponse();
@@ -115,7 +118,8 @@ public final class MessageCodec {
                             body.getSuccess(),
                             body.getMatchIndex(),
                             body.getConflictIndex(),
-                            body.getConflictTerm());
+                            body.getConflictTerm(),
+                            body.getRound());
                 }
                 case REQUEST_VOTE_REQUEST -> {
                     dev.flotilla.wire.v1.RequestVoteRequest body = envelope.getRequestVoteRequest();

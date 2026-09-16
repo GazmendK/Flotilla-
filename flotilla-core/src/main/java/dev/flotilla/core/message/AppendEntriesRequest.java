@@ -18,7 +18,8 @@ public record AppendEntriesRequest(
         long prevLogIndex,
         long prevLogTerm,
         List<LogEntry> entries,
-        long leaderCommit)
+        long leaderCommit,
+        long round)
         implements RaftMessage {
     public AppendEntriesRequest {
         Objects.requireNonNull(from, "from");
@@ -27,6 +28,9 @@ public record AppendEntriesRequest(
         entries = List.copyOf(Objects.requireNonNull(entries, "entries"));
         if (prevLogIndex < 0) {
             throw new IllegalArgumentException("prevLogIndex must not be negative, was " + prevLogIndex);
+        }
+        if (round < 0) {
+            throw new IllegalArgumentException("round must not be negative, was " + round);
         }
     }
 

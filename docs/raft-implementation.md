@@ -88,7 +88,8 @@ construction of the election and commit rules only.
 | Batching and pipelining with an inflight window | `state.Progress`, `RaftConfig` | done |
 | Learners (*dissertation* §4.2.1) | `ClusterConfig` | modelled; promotion is Phase 12 |
 | Leadership transfer (*dissertation* §3.10) | `TimeoutNowRequest` | message exists, handled in Phase 12 |
-| ReadIndex (*dissertation* §6.4) | `ReadIndexRequest`, `ReadState` | messages exist, handled in Phase 11 |
+| ReadIndex (*dissertation* §6.4) | `RaftNode.readIndex`, `state.ReadIndexQueue`, rounds on `AppendEntries` | done, see ADR-0028 |
+| Lease reads (*dissertation* §6.4.1) | `RaftNode.leaseRead`, `isInStartupQuietPeriod` | done, off by default, see ADR-0028 |
 | Snapshots (Figure 13) | `RaftNode.handleInstallSnapshot`, `sendSnapshot`, `Progress.SNAPSHOT` | done in the core, see ADR-0025 |
 
 ## Deliberate deviations

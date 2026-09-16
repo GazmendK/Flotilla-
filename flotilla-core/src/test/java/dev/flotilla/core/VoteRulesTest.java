@@ -144,7 +144,7 @@ class VoteRulesTest {
         drain(node);
         assertThat(node.votedFor()).contains(N2);
 
-        node.step(new AppendEntriesRequest(N3, N1, 9, 0, 0, List.of(), 0));
+        node.step(new AppendEntriesRequest(N3, N1, 9, 0, 0, List.of(), 0, 0));
 
         assertThat(node.currentTerm()).isEqualTo(9);
         assertThat(node.role()).isEqualTo(RaftRole.FOLLOWER);

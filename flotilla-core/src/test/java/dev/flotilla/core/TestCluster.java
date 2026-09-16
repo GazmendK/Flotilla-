@@ -26,6 +26,7 @@ final class TestCluster {
     private final SortedMap<NodeId, InMemorySnapshotStore> snapshots;
     private final ClusterConfig cluster;
     private final SortedMap<NodeId, List<Snapshot>> installedSnapshots = new TreeMap<>();
+    private final SortedMap<NodeId, List<ReadState>> readStates = new TreeMap<>();
     private final SortedMap<NodeId, List<LogEntry>> applied = new TreeMap<>();
     private final SortedSet<NodeId> isolated = new TreeSet<>();
 
@@ -43,6 +44,7 @@ final class TestCluster {
         nodes.keySet().forEach(id -> {
             applied.put(id, new ArrayList<>());
             installedSnapshots.put(id, new ArrayList<>());
+            readStates.put(id, new ArrayList<>());
             appendRequests.put(id, 0);
         });
     }
@@ -131,6 +133,7 @@ final class TestCluster {
                 batch.addAll(ready.messagesToSend());
                 appliedOf(node.id()).addAll(ready.committedEntriesToApply());
                 ready.snapshot().ifPresent(installedSnapshotsOf(node.id())::add);
+                readStatesOf(node.id()).addAll(ready.readStates());
                 node.advance();
             }
             if (batch.isEmpty()) {
@@ -188,6 +191,14 @@ final class TestCluster {
             throw new IllegalArgumentException("Unknown node " + id + " in " + snapshots.keySet());
         }
         return store;
+    }
+
+    List<ReadState> readStatesOf(NodeId id) {
+        List<ReadState> states = readStates.get(id);
+        if (states == null) {
+            throw new IllegalArgumentException("Unknown node " + id + " in " + readStates.keySet());
+        }
+        return states;
     }
 
     List<Snapshot> installedSnapshotsOf(NodeId id) {

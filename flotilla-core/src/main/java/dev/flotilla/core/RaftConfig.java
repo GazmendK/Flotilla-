@@ -16,7 +16,9 @@ public record RaftConfig(
         int maxEntriesPerAppend,
         long maxAppendBytes,
         int maxInflightAppends,
-        int snapshotTimeoutTicks) {
+        int snapshotTimeoutTicks,
+        boolean leaseReads,
+        int clockDriftBoundTicks) {
     public static final int MIN_ELECTION_TO_HEARTBEAT_RATIO = 3;
 
     public RaftConfig {
@@ -60,6 +62,16 @@ public record RaftConfig(
                     + "). Resending a snapshot sooner than a follower could have answered wastes the "
                     + "leader upload bandwidth the follower still needs to finish the first transfer.");
         }
+        if (clockDriftBoundTicks < 0 || clockDriftBoundTicks >= electionTimeoutMinTicks) {
+            throw new IllegalArgumentException("clockDriftBoundTicks must be between 0 and electionTimeoutMinTicks ("
+                    + electionTimeoutMinTicks + "), was " + clockDriftBoundTicks
+                    + "; a lease that expires before it begins protects nothing.");
+        }
+        if (leaseReads && !checkQuorum) {
+            throw new IllegalArgumentException("leaseReads requires checkQuorum. A lease is only safe because "
+                    + "followers refuse to vote while they still hear from a leader, and that refusal is "
+                    + "part of CheckQuorum.");
+        }
     }
 
     public static Builder builder(NodeId nodeId) {
@@ -77,6 +89,8 @@ public record RaftConfig(
         private long maxAppendBytes = 1024L * 1024L;
         private int maxInflightAppends = 16;
         private int snapshotTimeoutTicks = 40;
+        private boolean leaseReads;
+        private int clockDriftBoundTicks = 2;
 
         private Builder(NodeId nodeId) {
             this.nodeId = Objects.requireNonNull(nodeId, "nodeId");
@@ -123,6 +137,16 @@ public record RaftConfig(
             return this;
         }
 
+        public Builder leaseReads(boolean enabled) {
+            this.leaseReads = enabled;
+            return this;
+        }
+
+        public Builder clockDriftBoundTicks(int ticks) {
+            this.clockDriftBoundTicks = ticks;
+            return this;
+        }
+
         public RaftConfig build() {
             return new RaftConfig(
                     nodeId,
@@ -134,12 +158,18 @@ public record RaftConfig(
                     maxEntriesPerAppend,
                     maxAppendBytes,
                     maxInflightAppends,
-                    snapshotTimeoutTicks);
+                    snapshotTimeoutTicks,
+                    leaseReads,
+                    clockDriftBoundTicks);
         }
     }
 
     public static RaftConfig defaults(NodeId nodeId) {
         return builder(nodeId).build();
+    }
+
+    public int leaseTicks() {
+        return electionTimeoutMinTicks - clockDriftBoundTicks;
     }
 
     public int electionTimeoutSpreadTicks() {

@@ -158,7 +158,7 @@ class SnapshotProtocolTest {
         fillLog(1, 1, 4);
         RaftNode follower = node(PAIR, new HardState(1, null, 0));
         follower.step(new AppendEntriesRequest(
-                N2, N1, 1, 4, 1, List.of(LogEntry.normal(1, 5, Bytes.ofUtf8("not yet on disk"))), 0));
+                N2, N1, 1, 4, 1, List.of(LogEntry.normal(1, 5, Bytes.ofUtf8("not yet on disk"))), 0, 0));
         Snapshot snapshot = snapshotAt(9, 5);
 
         follower.step(new InstallSnapshotRequest(N2, N1, 5, snapshot));
@@ -187,11 +187,11 @@ class SnapshotProtocolTest {
         RaftNode follower = node(PAIR, new HardState(3, null, 10));
         log.compactTo(8);
 
-        follower.step(new AppendEntriesRequest(N2, N1, 3, 2, 3, List.of(), 10));
+        follower.step(new AppendEntriesRequest(N2, N1, 3, 2, 3, List.of(), 10, 7));
 
         assertThat(drain(follower))
                 .singleElement()
-                .isEqualTo(dev.flotilla.core.message.AppendEntriesResponse.accepted(N1, N2, 3, 8));
+                .isEqualTo(dev.flotilla.core.message.AppendEntriesResponse.accepted(N1, N2, 3, 8, 7));
     }
 
     @Test

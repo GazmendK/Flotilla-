@@ -50,10 +50,11 @@ class MessageCodecTest {
                                 LogEntry.normal(3, 8, Bytes.ofUtf8("x")),
                                 LogEntry.noOp(3, 9),
                                 LogEntry.configuration(3, 10, Bytes.ofUtf8("cfg"))),
-                        6),
-                new AppendEntriesRequest(A, B, 1, 0, 0, List.of(), 0),
-                new AppendEntriesResponse(B, A, 3, false, 0, 5, 2),
-                new AppendEntriesResponse(B, A, 3, true, 10, 0, 0),
+                        6,
+                        42),
+                new AppendEntriesRequest(A, B, 1, 0, 0, List.of(), 0, 0),
+                new AppendEntriesResponse(B, A, 3, false, 0, 5, 2, 17),
+                new AppendEntriesResponse(B, A, 3, true, 10, 0, 0, 0),
                 new RequestVoteRequest(A, B, 4, 10, 3, true),
                 new RequestVoteResponse(B, A, 4, true, false),
                 new InstallSnapshotRequest(
@@ -160,7 +161,8 @@ class MessageCodecTest {
             for (int i = 0; i < count; i++) {
                 entries.add(LogEntry.normal(term, prevIndex + 1 + i, Bytes.copyOf(SeededInputs.bytes(random, 64))));
             }
-            AppendEntriesRequest original = new AppendEntriesRequest(A, B, term, prevIndex, term, entries, prevIndex);
+            AppendEntriesRequest original =
+                    new AppendEntriesRequest(A, B, term, prevIndex, term, entries, prevIndex, term);
 
             assertThat(throughTheWire(original))
                     .as("seed %d, attempt %d", SeededInputs.SEED, attempt)
