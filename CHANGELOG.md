@@ -12,6 +12,14 @@ not stable before 1.0.0.
 
 ### Added
 
+- A linearizability checker, written for this project and depending on nothing but the JDK. It
+  follows Porcupine's search, checks each key independently, treats a timed-out operation as one
+  that may or may not have happened, and reports UNKNOWN when it runs out of time instead of passing.
+  A failing history is rendered as a timeline that marks the operation no order can explain.
+- The checker is itself checked: it rejects the textbook violations, accepts 3,000-operation
+  histories produced by a real sequential execution, catches a single corrupted read in them every
+  time, and agrees with a brute-force search on 50,000 small random histories. That comparison
+  caught an unsound optimisation on the first history it saw.
 - A follower that has fallen behind a compacted prefix is caught up over the network. The leader
   splits the snapshot into chunks and sends them in order on a thread of their own, so the event
   loop never waits for a transfer; the receiver reassembles them by offset, so a reordered or

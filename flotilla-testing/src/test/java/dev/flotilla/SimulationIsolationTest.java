@@ -4,6 +4,7 @@
  */
 package dev.flotilla;
 
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
@@ -55,6 +56,20 @@ class SimulationIsolationTest {
                 .because("virtual time is the point: a simulated hour must take milliseconds, and "
                         + "the same seed must always produce the same run")
                 .allowEmptyShould(true)
+                .check(CLASSES);
+    }
+
+    @Test
+    @DisplayName("the linearizability checker knows nothing about the system it checks")
+    void theCheckerIsIndependentOfTheImplementation() {
+        classes()
+                .that()
+                .resideInAPackage("dev.flotilla.linearizability..")
+                .should()
+                .onlyDependOnClassesThat()
+                .resideInAnyPackage("dev.flotilla.linearizability..", "java..", "org.jspecify..")
+                .because("a checker that shares code with the system under test can share its bugs, "
+                        + "and then agrees with them")
                 .check(CLASSES);
     }
 }
