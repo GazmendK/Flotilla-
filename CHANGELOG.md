@@ -12,6 +12,17 @@ not stable before 1.0.0.
 
 ### Added
 
+- A follower that has fallen behind a compacted prefix is caught up over the network. The leader
+  splits the snapshot into chunks and sends them in order on a thread of their own, so the event
+  loop never waits for a transfer; the receiver reassembles them by offset, so a reordered or
+  duplicated chunk costs nothing and a lost one simply leaves the transfer incomplete until the
+  leader starts it again. A transfer larger than the configured limit is refused rather than
+  buffered, and a newer snapshot abandons a half received older one instead of mixing the two.
+- `InstallSnapshotIT` stops a node, writes past the point where its entries are deleted, and starts
+  it again with a message limit smaller than the snapshot — so the test only passes if the transfer
+  is genuinely chunked. Sending the snapshot as one message leaves the node stuck forever.
+- `docs/operations.md`: how to back a cluster up, how to restore it, how large snapshots get, which
+  numbers to watch, and what each of them means when it goes wrong.
 - Snapshots are taken at runtime and the log no longer grows without bound. The apply loop stops only
   long enough to copy the state, a background thread serializes and writes it, and the event loop
   discards the compacted prefix. Measured on 200,000 keys: 15 ms to copy, 29 ms to encode, so two

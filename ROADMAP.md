@@ -22,7 +22,7 @@ phase inherits fault injection and invariant checking for free.
 | 7 | Node runtime: single-writer event loop, group commit, backpressure | **done** |
 | 8 | Key-value state machine, client sessions, exactly-once semantics | **done** |
 | 9 | gRPC transport, client library, real multi-process cluster | **done** |
-| 10 | Snapshotting, log compaction, streamed InstallSnapshot | in progress |
+| 10 | Snapshotting, log compaction, streamed InstallSnapshot | done |
 | 11 | Linearizable reads (ReadIndex, lease, follower) and a linearizability checker | planned |
 | 12 | Membership changes with learners, and leader transfer | planned |
 | 13 | Metrics, structured logging, live cluster visualization | planned |

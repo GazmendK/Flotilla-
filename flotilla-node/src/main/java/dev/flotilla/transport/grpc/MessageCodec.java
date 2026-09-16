@@ -126,8 +126,14 @@ public final class MessageCodec {
                     dev.flotilla.wire.v1.RequestVoteResponse body = envelope.getRequestVoteResponse();
                     yield new RequestVoteResponse(from, to, term, body.getVoteGranted(), body.getPreVote());
                 }
-                case INSTALL_SNAPSHOT_REQUEST ->
-                    new InstallSnapshotRequest(from, to, term, fromWire(envelope.getInstallSnapshotRequest()));
+                case INSTALL_SNAPSHOT_REQUEST -> {
+                    dev.flotilla.wire.v1.InstallSnapshotRequest body = envelope.getInstallSnapshotRequest();
+                    if (!SnapshotChunks.isWholeSnapshot(body)) {
+                        throw new WireFormatException("A snapshot chunk at offset " + body.getOffset()
+                                + " is part of a transfer, not a message; it has to be reassembled first");
+                    }
+                    yield new InstallSnapshotRequest(from, to, term, fromWire(body));
+                }
                 case INSTALL_SNAPSHOT_RESPONSE -> {
                     dev.flotilla.wire.v1.InstallSnapshotResponse body = envelope.getInstallSnapshotResponse();
                     yield new InstallSnapshotResponse(from, to, term, body.getMatchIndex(), body.getInstalled());

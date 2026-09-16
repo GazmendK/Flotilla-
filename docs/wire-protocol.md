@@ -104,6 +104,14 @@ sequenceDiagram
 The core exchanges whole snapshots; the transport splits one into chunks and reassembles it, which
 is what `offset` and `done` are for. See [ADR-0025](adr/0025-whole-snapshots-in-the-core.md).
 
+Chunks travel as ordinary `Deliver` calls, one per chunk, sent in order on a thread of their own so
+the event loop never waits for a transfer. Each chunk carries its own offset, so a reordered or
+duplicated chunk costs nothing; a lost one leaves the transfer incomplete until the leader gives up
+waiting and starts it again. A transfer larger than `maxSnapshotBytes` is refused rather than
+buffered, and a newer snapshot from the same peer abandons a half received older one instead of
+mixing the two. A chunk on its own is not a message: the codec refuses to decode one rather than
+guess what the rest would have said.
+
 `InstallSnapshotResponse.matchIndex` is the index through which the follower's log now agrees with
 the leader. It is filled in whether the snapshot was installed, refused as stale, or found to cover
 a prefix the follower already had — so the leader learns where to continue in all three cases and

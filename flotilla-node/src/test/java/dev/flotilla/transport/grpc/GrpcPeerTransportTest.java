@@ -122,7 +122,7 @@ class GrpcPeerTransportTest {
                     .isTrue();
 
             Server peer = NettyServerBuilder.forAddress(address)
-                    .addService(new GrpcPeerService(PEER, received::add))
+                    .addService(new GrpcPeerService(PEER, received::add, TransportConfig.DEFAULT_MAX_SNAPSHOT_BYTES))
                     .build()
                     .start();
             try {
@@ -155,7 +155,7 @@ class GrpcPeerTransportTest {
             }
 
             Server peer = NettyServerBuilder.forAddress(address)
-                    .addService(new GrpcPeerService(PEER, received::add))
+                    .addService(new GrpcPeerService(PEER, received::add, TransportConfig.DEFAULT_MAX_SNAPSHOT_BYTES))
                     .build()
                     .start();
             try {

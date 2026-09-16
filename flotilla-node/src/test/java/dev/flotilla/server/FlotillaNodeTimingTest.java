@@ -39,7 +39,8 @@ class FlotillaNodeTimingTest {
     @Test
     @DisplayName("a message limit smaller than the largest batch the leader may send is refused at startup")
     void aMessageLimitBelowTheBatchSizeIsRefused() {
-        TransportConfig transport = TransportConfig.defaults().withMaxMessageBytes(1024 * 1024);
+        TransportConfig transport =
+                TransportConfig.defaults().withSnapshotChunkBytes(64 * 1024).withMaxMessageBytes(1024 * 1024);
 
         assertThatThrownBy(() -> FlotillaNode.validateTiming(ServerConfig.defaults(), RAFT, transport))
                 .isInstanceOf(IllegalArgumentException.class)

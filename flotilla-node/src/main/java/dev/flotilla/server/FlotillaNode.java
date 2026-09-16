@@ -62,10 +62,13 @@ public final class FlotillaNode implements AutoCloseable {
         GrpcPeerTransport transport = new GrpcPeerTransport(raftConfig.nodeId(), peers, transportConfig);
         RaftServer server =
                 RaftServer.start(serverConfig, raftConfig, cluster, storageConfig, stateMachine, transport::send);
-        GrpcPeerService service = new GrpcPeerService(raftConfig.nodeId(), message -> {
-            transport.peerIsAlive(message.from());
-            server.deliver(message);
-        });
+        GrpcPeerService service = new GrpcPeerService(
+                raftConfig.nodeId(),
+                message -> {
+                    transport.peerIsAlive(message.from());
+                    server.deliver(message);
+                },
+                transportConfig.maxSnapshotBytes());
         CommandGateway gateway = gateway(server, stateMachine, peers);
         try {
             Server grpc = NettyServerBuilder.forAddress(bindAddress)

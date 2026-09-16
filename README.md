@@ -137,6 +137,7 @@ Stated up front, because a bounded scope is a design decision:
 | [`docs/wire-protocol.md`](docs/wire-protocol.md) | Both RPCs, delivery semantics, the error model, and sequence diagrams for election, replication and a request surviving a leader change |
 | [`docs/consistency-model.md`](docs/consistency-model.md) | What the system guarantees, what it does not, and where each boundary is drawn on purpose |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | The layers, and the rule that every safeguard is tested with itself disabled |
+| [`docs/operations.md`](docs/operations.md) | Backup and restore, how large snapshots get, what to watch, and what to do when it goes wrong |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |
 | [`ROADMAP.md`](ROADMAP.md) | The 15 development phases, and why they are ordered that way |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, and what "done" means here |

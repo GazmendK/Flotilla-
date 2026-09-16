@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.core.message.TimeoutNowRequest;
+import dev.flotilla.transport.TransportConfig;
 import dev.flotilla.wire.v1.DeliverRequest;
 import dev.flotilla.wire.v1.DeliverResponse;
 import dev.flotilla.wire.v1.RaftPeerServiceGrpc;
@@ -34,7 +35,8 @@ class GrpcPeerServiceTest {
     private static final NodeId ELSEWHERE = NodeId.of("elsewhere");
 
     private final List<RaftMessage> received = new CopyOnWriteArrayList<>();
-    private final GrpcPeerService service = new GrpcPeerService(SELF, received::add);
+    private final GrpcPeerService service =
+            new GrpcPeerService(SELF, received::add, TransportConfig.DEFAULT_MAX_SNAPSHOT_BYTES);
 
     private Server server;
     private ManagedChannel channel;
