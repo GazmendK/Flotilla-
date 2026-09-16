@@ -17,8 +17,9 @@ public record Ready(
         List<RaftMessage> messagesToSend,
         List<LogEntry> committedEntriesToApply,
         @Nullable SoftState softStateChange,
-        List<ReadState> readStates) {
-    public static final Ready EMPTY = new Ready(null, List.of(), List.of(), List.of(), null, List.of());
+        List<ReadState> readStates,
+        @Nullable Snapshot snapshotToInstall) {
+    public static final Ready EMPTY = new Ready(null, List.of(), List.of(), List.of(), null, List.of(), null);
 
     public Ready {
         entriesToPersist = List.copyOf(Objects.requireNonNull(entriesToPersist, "entriesToPersist"));
@@ -31,6 +32,7 @@ public record Ready(
     public boolean isEmpty() {
         return hardStateToPersist == null
                 && softStateChange == null
+                && snapshotToInstall == null
                 && entriesToPersist.isEmpty()
                 && messagesToSend.isEmpty()
                 && committedEntriesToApply.isEmpty()
@@ -38,7 +40,7 @@ public record Ready(
     }
 
     public boolean requiresSync() {
-        return hardStateToPersist != null || !entriesToPersist.isEmpty();
+        return hardStateToPersist != null || snapshotToInstall != null || !entriesToPersist.isEmpty();
     }
 
     public Optional<HardState> hardState() {
@@ -47,6 +49,10 @@ public record Ready(
 
     public Optional<SoftState> softState() {
         return Optional.ofNullable(softStateChange);
+    }
+
+    public Optional<Snapshot> snapshot() {
+        return Optional.ofNullable(snapshotToInstall);
     }
 
     public static Builder builder() {
@@ -59,6 +65,9 @@ public record Ready(
 
         @Nullable
         private SoftState softState;
+
+        @Nullable
+        private Snapshot snapshot;
 
         private final List<LogEntry> entries = new ArrayList<>();
         private final List<RaftMessage> messages = new ArrayList<>();
@@ -74,6 +83,11 @@ public record Ready(
 
         public Builder softState(SoftState state) {
             this.softState = Objects.requireNonNull(state, "state");
+            return this;
+        }
+
+        public Builder install(Snapshot toInstall) {
+            this.snapshot = Objects.requireNonNull(toInstall, "toInstall");
             return this;
         }
 
@@ -103,7 +117,7 @@ public record Ready(
         }
 
         public Ready build() {
-            return new Ready(hardState, entries, messages, committed, softState, reads);
+            return new Ready(hardState, entries, messages, committed, softState, reads, snapshot);
         }
     }
 }

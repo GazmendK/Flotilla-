@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.flotilla.core.message.RequestVoteRequest;
 import dev.flotilla.core.port.RandomSource;
+import dev.flotilla.core.port.SnapshotStore;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +24,7 @@ class PreVoteTest {
                 RaftConfig.defaults(N1),
                 CLUSTER,
                 new InMemoryLogStore(),
+                SnapshotStore.none(),
                 RandomSource.seeded(1),
                 new HardState(term, null, 0));
     }

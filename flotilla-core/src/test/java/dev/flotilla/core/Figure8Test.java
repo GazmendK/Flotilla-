@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.core.message.RequestVoteResponse;
 import dev.flotilla.core.port.RandomSource;
+import dev.flotilla.core.port.SnapshotStore;
 import java.util.List;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +33,7 @@ class Figure8Test {
                 RaftConfig.defaults(id),
                 CLUSTER,
                 log,
+                SnapshotStore.none(),
                 RandomSource.seeded(id.value().hashCode()),
                 new HardState(startingTerm, null, 0));
     }

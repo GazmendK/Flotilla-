@@ -12,6 +12,17 @@ not stable before 1.0.0.
 
 ### Added
 
+- The snapshot protocol in the consensus core. A leader whose log no longer reaches a follower sends
+  it a snapshot instead of entries, tracks that peer in a `SNAPSHOT` state so it receives nothing
+  else meanwhile, and starts the transfer over if the answer never arrives. A follower refuses a
+  snapshot older than what it has committed, keeps its log when the snapshot only covers a prefix it
+  already holds, and otherwise replaces the log wholesale. Every one of those rules is checked by
+  turning it off: each makes exactly one test fail.
+- `RaftNode.compactLog` refuses to discard entries no snapshot covers, and refuses to run ahead of
+  the state machine. Compacting entries nothing else holds is the one failure that cannot be
+  repaired afterwards.
+- Snapshots carry the cluster configuration they were taken under, so Phase 12 does not have to
+  change the wire format to get it.
 - Log compaction in the storage layer. `compactTo` discards a prefix a snapshot covers while keeping
   the term of its last entry, which the next append after a snapshot depends on; `resetTo` discards
   the whole log when a follower installs a snapshot its log does not match. Both are part of the

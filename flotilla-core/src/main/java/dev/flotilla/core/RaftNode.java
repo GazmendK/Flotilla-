@@ -16,6 +16,7 @@ import dev.flotilla.core.message.RequestVoteResponse;
 import dev.flotilla.core.message.TimeoutNowRequest;
 import dev.flotilla.core.port.LogStore;
 import dev.flotilla.core.port.RandomSource;
+import dev.flotilla.core.port.SnapshotStore;
 import dev.flotilla.core.state.Candidate;
 import dev.flotilla.core.state.Follower;
 import dev.flotilla.core.state.Leader;
@@ -36,6 +37,7 @@ public final class RaftNode {
     private final RaftConfig config;
     private final ClusterConfig cluster;
     private final LogStore log;
+    private final SnapshotStore snapshots;
     private final ElectionTimer electionTimer;
 
     private final List<RaftMessage> outbox = new ArrayList<>();
@@ -51,13 +53,23 @@ public final class RaftNode {
     private long emittedCommitIndex;
     private int heartbeatElapsedTicks;
 
+    @Nullable
+    private Snapshot pendingSnapshot;
+
     private HardState publishedHardState;
     private SoftState publishedSoftState;
 
-    public RaftNode(RaftConfig config, ClusterConfig cluster, LogStore log, RandomSource random, HardState persisted) {
+    public RaftNode(
+            RaftConfig config,
+            ClusterConfig cluster,
+            LogStore log,
+            SnapshotStore snapshots,
+            RandomSource random,
+            HardState persisted) {
         this.config = Objects.requireNonNull(config, "config");
         this.cluster = Objects.requireNonNull(cluster, "cluster");
         this.log = Objects.requireNonNull(log, "log");
+        this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
         Objects.requireNonNull(persisted, "persisted");
         if (!cluster.contains(config.nodeId())) {
             throw new IllegalArgumentException(
@@ -66,15 +78,15 @@ public final class RaftNode {
         this.electionTimer = new ElectionTimer(config, Objects.requireNonNull(random, "random"));
         this.currentTerm = persisted.currentTerm();
         this.votedFor = persisted.votedFor();
-        this.commitIndex = persisted.commitIndex();
-        this.emittedCommitIndex = persisted.commitIndex();
+        this.commitIndex = Math.max(persisted.commitIndex(), log.firstIndex() - 1);
+        this.emittedCommitIndex = this.commitIndex;
         this.state = Follower.withoutLeader();
         this.publishedHardState = persisted;
         this.publishedSoftState = SoftState.follower();
     }
 
     public static RaftNode bootstrap(RaftConfig config, ClusterConfig cluster, LogStore log, RandomSource random) {
-        return new RaftNode(config, cluster, log, random, HardState.INITIAL);
+        return new RaftNode(config, cluster, log, SnapshotStore.none(), random, HardState.INITIAL);
     }
 
     public NodeId id() {
@@ -105,6 +117,10 @@ public final class RaftNode {
         return log.lastIndex();
     }
 
+    public long firstLogIndex() {
+        return log.firstIndex();
+    }
+
     public boolean isLeader() {
         return state instanceof Leader;
     }
@@ -117,6 +133,22 @@ public final class RaftNode {
         appendToOwnLog(List.of(LogEntry.normal(currentTerm, log.lastIndex() + 1, command)));
         broadcastAppend();
         return true;
+    }
+
+    @RaftSpec("§7 Log compaction")
+    public void compactLog(long throughIndex) {
+        long covered = snapshots.latest().map(Snapshot::lastIncludedIndex).orElse(0L);
+        if (throughIndex > covered) {
+            throw new IllegalArgumentException("Cannot compact the log through index " + throughIndex
+                    + "; the newest snapshot only covers index " + covered
+                    + ". A follower that falls behind a compacted prefix can only be caught up from a snapshot, "
+                    + "so the snapshot has to exist before the entries go away.");
+        }
+        if (throughIndex > emittedCommitIndex) {
+            throw new IllegalArgumentException("Cannot compact the log through index " + throughIndex
+                    + "; only entries up to index " + emittedCommitIndex + " have been handed to the state machine.");
+        }
+        log.compactTo(throughIndex);
     }
 
     public void tick() {
@@ -137,6 +169,9 @@ public final class RaftNode {
         for (RaftMessage message : outbox) {
             builder.send(message);
         }
+        if (pendingSnapshot != null) {
+            builder.install(pendingSnapshot);
+        }
         if (commitIndex > emittedCommitIndex) {
             int count = (int) Math.min(Integer.MAX_VALUE, commitIndex - emittedCommitIndex);
             builder.apply(log.entriesFrom(emittedCommitIndex + 1, count, Long.MAX_VALUE));
@@ -155,6 +190,7 @@ public final class RaftNode {
     public void advance() {
         outbox.clear();
         unpersisted.clear();
+        pendingSnapshot = null;
         emittedCommitIndex = commitIndex;
         publishedHardState = currentHardState();
         publishedSoftState = currentSoftState();
@@ -184,9 +220,9 @@ public final class RaftNode {
             case RequestVoteResponse response -> handleRequestVoteResponse(response);
             case AppendEntriesRequest request -> handleAppendEntries(request);
             case AppendEntriesResponse response -> handleAppendEntriesResponse(response);
+            case InstallSnapshotRequest request -> handleInstallSnapshot(request);
+            case InstallSnapshotResponse response -> handleInstallSnapshotResponse(response);
             case TimeoutNowRequest ignored -> {}
-            case InstallSnapshotRequest ignored -> {}
-            case InstallSnapshotResponse ignored -> {}
             case ReadIndexRequest ignored -> {}
             case ReadIndexResponse ignored -> {}
         }
@@ -215,6 +251,8 @@ public final class RaftNode {
                 send(new RequestVoteResponse(id(), request.from(), currentTerm, false, request.preVote()));
             case AppendEntriesRequest request ->
                 send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, 0, 0));
+            case InstallSnapshotRequest request ->
+                send(new InstallSnapshotResponse(id(), request.from(), currentTerm, 0, false));
             default -> {}
         }
     }
@@ -229,6 +267,7 @@ public final class RaftNode {
     private void tickLeader(Leader leader) {
         heartbeatElapsedTicks++;
         electionTimer.tick();
+        resendSnapshotsThatWentUnanswered(leader);
 
         if (heartbeatElapsedTicks >= config.heartbeatTicks()) {
             heartbeatElapsedTicks = 0;
@@ -241,6 +280,18 @@ public final class RaftNode {
                 becomeFollower(currentTerm, null);
             } else {
                 leader.resetActivity(id());
+            }
+        }
+    }
+
+    @RaftSpec("§7 Log compaction")
+    private void resendSnapshotsThatWentUnanswered(Leader leader) {
+        for (Map.Entry<NodeId, Progress> peer : leader.peers().entrySet()) {
+            Progress progress = peer.getValue();
+            progress.recordSnapshotTick();
+            if (progress.snapshotTimedOut(config.snapshotTimeoutTicks())) {
+                progress.becomeProbe();
+                replicateTo(peer.getKey(), progress);
             }
         }
     }
@@ -323,6 +374,11 @@ public final class RaftNode {
         becomeFollower(currentTerm, request.from());
 
         long prevIndex = request.prevLogIndex();
+        long snapshotIndex = log.firstIndex() - 1;
+        if (prevIndex < snapshotIndex) {
+            send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, snapshotIndex));
+            return;
+        }
         if (prevIndex > log.lastIndex()) {
             send(AppendEntriesResponse.rejected(id(), request.from(), currentTerm, log.lastIndex() + 1, 0));
             return;
@@ -341,6 +397,30 @@ public final class RaftNode {
         long lastNewIndex = storeEntries(request.entries(), prevIndex);
         advanceFollowerCommit(request.leaderCommit(), lastNewIndex);
         send(AppendEntriesResponse.accepted(id(), request.from(), currentTerm, lastNewIndex));
+    }
+
+    @RaftSpec("Figure 13, InstallSnapshot RPC")
+    private void handleInstallSnapshot(InstallSnapshotRequest request) {
+        becomeFollower(currentTerm, request.from());
+
+        Snapshot snapshot = request.snapshot();
+        long index = snapshot.lastIncludedIndex();
+        if (index <= commitIndex) {
+            send(new InstallSnapshotResponse(id(), request.from(), currentTerm, commitIndex, false));
+            return;
+        }
+        if (index <= log.lastIndex() && log.termAt(index) == snapshot.lastIncludedTerm()) {
+            commitIndex = index;
+            send(new InstallSnapshotResponse(id(), request.from(), currentTerm, index, false));
+            return;
+        }
+
+        log.resetTo(index, snapshot.lastIncludedTerm());
+        unpersisted.clear();
+        commitIndex = index;
+        emittedCommitIndex = index;
+        pendingSnapshot = snapshot;
+        send(new InstallSnapshotResponse(id(), request.from(), currentTerm, index, true));
     }
 
     private long storeEntries(List<LogEntry> entries, long prevIndex) {
@@ -388,17 +468,52 @@ public final class RaftNode {
 
         if (response.success()) {
             boolean advanced = progress.maybeUpdate(response.matchIndex());
+            leaveSnapshotStateIfCaughtUp(progress);
             if (progress.state() == ProgressState.PROBE) {
                 progress.becomeReplicate();
             }
             if (advanced) {
                 maybeAdvanceLeaderCommit(leader);
             }
-        } else {
+        } else if (progress.state() != ProgressState.SNAPSHOT) {
             progress.resetNextIndex(nextIndexAfterRejection(response));
             progress.becomeProbe();
         }
-        sendAppendIfPending(response.from(), progress);
+        replicateTo(response.from(), progress);
+    }
+
+    @RaftSpec("§7 Log compaction")
+    private void handleInstallSnapshotResponse(InstallSnapshotResponse response) {
+        if (!(state instanceof Leader leader)) {
+            return;
+        }
+        leader.markActive(response.from());
+        Progress progress = leader.progressFor(response.from());
+        if (progress == null) {
+            return;
+        }
+        progress.recordReply();
+
+        boolean advanced = progress.maybeUpdate(response.matchIndex());
+        if (progress.state() == ProgressState.SNAPSHOT) {
+            long pending = progress.pendingSnapshotIndex();
+            progress.becomeProbe();
+            if (progress.matchIndex() >= pending) {
+                progress.becomeReplicate();
+            } else {
+                progress.resetNextIndex(response.matchIndex() + 1);
+            }
+        }
+        if (advanced) {
+            maybeAdvanceLeaderCommit(leader);
+        }
+        replicateTo(response.from(), progress);
+    }
+
+    private static void leaveSnapshotStateIfCaughtUp(Progress progress) {
+        if (progress.state() == ProgressState.SNAPSHOT && progress.matchIndex() >= progress.pendingSnapshotIndex()) {
+            progress.becomeReplicate();
+        }
     }
 
     @RaftSpec("§5.3 Log replication")
@@ -491,22 +606,38 @@ public final class RaftNode {
             return;
         }
         for (Map.Entry<NodeId, Progress> peer : leader.peers().entrySet()) {
-            sendAppendIfPending(peer.getKey(), peer.getValue());
+            replicateTo(peer.getKey(), peer.getValue());
         }
     }
 
     private void broadcastHeartbeat(Leader leader) {
         for (Map.Entry<NodeId, Progress> peer : leader.peers().entrySet()) {
-            long prevIndex = peer.getValue().matchIndex();
+            long prevIndex = Math.max(peer.getValue().matchIndex(), log.firstIndex() - 1);
             send(new AppendEntriesRequest(
                     id(), peer.getKey(), currentTerm, prevIndex, log.termAt(prevIndex), List.of(), commitIndex));
         }
     }
 
-    private void sendAppendIfPending(NodeId peer, Progress progress) {
-        if (progress.nextIndex() <= log.lastIndex()) {
+    private void replicateTo(NodeId peer, Progress progress) {
+        if (progress.state() == ProgressState.SNAPSHOT) {
+            return;
+        }
+        if (progress.nextIndex() < log.firstIndex()) {
+            sendSnapshot(peer, progress);
+        } else if (progress.nextIndex() <= log.lastIndex()) {
             sendAppend(peer, progress);
         }
+    }
+
+    @RaftSpec("§7 Log compaction")
+    private void sendSnapshot(NodeId peer, Progress progress) {
+        Optional<Snapshot> available = snapshots.latest();
+        if (available.isEmpty() || !available.get().covers(log.firstIndex() - 1)) {
+            return;
+        }
+        Snapshot snapshot = available.get();
+        send(new InstallSnapshotRequest(id(), peer, currentTerm, snapshot));
+        progress.becomeSnapshot(snapshot.lastIncludedIndex());
     }
 
     private void sendAppend(NodeId peer, Progress progress) {

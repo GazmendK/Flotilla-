@@ -23,16 +23,26 @@ final class TestCluster {
 
     private final SortedMap<NodeId, RaftNode> nodes;
     private final SortedMap<NodeId, InMemoryLogStore> logs;
+    private final SortedMap<NodeId, InMemorySnapshotStore> snapshots;
+    private final ClusterConfig cluster;
+    private final SortedMap<NodeId, List<Snapshot>> installedSnapshots = new TreeMap<>();
     private final SortedMap<NodeId, List<LogEntry>> applied = new TreeMap<>();
     private final SortedSet<NodeId> isolated = new TreeSet<>();
 
     private final SortedMap<NodeId, Integer> appendRequests = new TreeMap<>();
 
-    private TestCluster(SortedMap<NodeId, RaftNode> nodes, SortedMap<NodeId, InMemoryLogStore> logs) {
+    private TestCluster(
+            SortedMap<NodeId, RaftNode> nodes,
+            SortedMap<NodeId, InMemoryLogStore> logs,
+            SortedMap<NodeId, InMemorySnapshotStore> snapshots,
+            ClusterConfig cluster) {
         this.nodes = nodes;
         this.logs = logs;
+        this.snapshots = snapshots;
+        this.cluster = cluster;
         nodes.keySet().forEach(id -> {
             applied.put(id, new ArrayList<>());
+            installedSnapshots.put(id, new ArrayList<>());
             appendRequests.put(id, 0);
         });
     }
@@ -56,6 +66,7 @@ final class TestCluster {
         ClusterConfig cluster = ClusterConfig.ofVoters(initialLogs.keySet());
         SortedMap<NodeId, RaftNode> nodes = new TreeMap<>();
         SortedMap<NodeId, InMemoryLogStore> logs = new TreeMap<>();
+        SortedMap<NodeId, InMemorySnapshotStore> snapshots = new TreeMap<>();
 
         long seed = 0;
         for (NodeId id : initialLogs.keySet()) {
@@ -66,12 +77,20 @@ final class TestCluster {
                 log.append(entries);
             }
             RaftConfig config = tuning.apply(RaftConfig.builder(id)).build();
+            InMemorySnapshotStore snapshotStore = new InMemorySnapshotStore();
             logs.put(id, log);
+            snapshots.put(id, snapshotStore);
             nodes.put(
                     id,
-                    new RaftNode(config, cluster, log, RandomSource.seeded(seed), new HardState(initialTerm, null, 0)));
+                    new RaftNode(
+                            config,
+                            cluster,
+                            log,
+                            snapshotStore,
+                            RandomSource.seeded(seed),
+                            new HardState(initialTerm, null, 0)));
         }
-        return new TestCluster(nodes, logs);
+        return new TestCluster(nodes, logs, snapshots, cluster);
     }
 
     static List<LogEntry> logWithTerms(long... terms) {
@@ -111,6 +130,7 @@ final class TestCluster {
                 Ready ready = node.ready();
                 batch.addAll(ready.messagesToSend());
                 appliedOf(node.id()).addAll(ready.committedEntriesToApply());
+                ready.snapshot().ifPresent(installedSnapshotsOf(node.id())::add);
                 node.advance();
             }
             if (batch.isEmpty()) {
@@ -162,6 +182,30 @@ final class TestCluster {
         return log;
     }
 
+    InMemorySnapshotStore snapshots(NodeId id) {
+        InMemorySnapshotStore store = snapshots.get(id);
+        if (store == null) {
+            throw new IllegalArgumentException("Unknown node " + id + " in " + snapshots.keySet());
+        }
+        return store;
+    }
+
+    List<Snapshot> installedSnapshotsOf(NodeId id) {
+        List<Snapshot> installed = installedSnapshots.get(id);
+        if (installed == null) {
+            throw new IllegalArgumentException("Unknown node " + id + " in " + installedSnapshots.keySet());
+        }
+        return installed;
+    }
+
+    Snapshot takeSnapshot(NodeId id, long throughIndex) {
+        Snapshot snapshot = new Snapshot(
+                throughIndex, log(id).termAt(throughIndex), cluster, Bytes.ofUtf8("state through " + throughIndex));
+        snapshots(id).save(snapshot);
+        node(id).compactLog(throughIndex);
+        return snapshot;
+    }
+
     List<LogEntry> appliedOf(NodeId id) {
         List<LogEntry> entries = applied.get(id);
         if (entries == null) {
@@ -172,7 +216,7 @@ final class TestCluster {
 
     List<Long> logTerms(NodeId id) {
         InMemoryLogStore log = log(id);
-        return LongStream.rangeClosed(1, log.lastIndex())
+        return LongStream.rangeClosed(log.firstIndex(), log.lastIndex())
                 .boxed()
                 .map(log::termAt)
                 .toList();

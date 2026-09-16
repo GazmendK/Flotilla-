@@ -14,6 +14,8 @@ public final class Progress {
     private long matchIndex;
     private int inflightCount;
     private boolean probeInFlight;
+    private long pendingSnapshotIndex;
+    private int snapshotElapsedTicks;
 
     public Progress(long nextIndex) {
         if (nextIndex < 1) {
@@ -32,6 +34,10 @@ public final class Progress {
 
     public ProgressState state() {
         return state;
+    }
+
+    public long pendingSnapshotIndex() {
+        return pendingSnapshotIndex;
     }
 
     public boolean maybeUpdate(long matchedIndex) {
@@ -53,6 +59,7 @@ public final class Progress {
         state = ProgressState.PROBE;
         probeInFlight = false;
         inflightCount = 0;
+        forgetSnapshot();
     }
 
     public void becomeReplicate() {
@@ -60,6 +67,30 @@ public final class Progress {
         nextIndex = matchIndex + 1;
         probeInFlight = false;
         inflightCount = 0;
+        forgetSnapshot();
+    }
+
+    @RaftSpec("§7 Log compaction")
+    public void becomeSnapshot(long snapshotIndex) {
+        if (snapshotIndex < matchIndex) {
+            throw new IllegalArgumentException("A snapshot through index " + snapshotIndex
+                    + " cannot catch up a peer that already matches through index " + matchIndex + ".");
+        }
+        state = ProgressState.SNAPSHOT;
+        probeInFlight = false;
+        inflightCount = 0;
+        pendingSnapshotIndex = snapshotIndex;
+        snapshotElapsedTicks = 0;
+    }
+
+    public void recordSnapshotTick() {
+        if (state == ProgressState.SNAPSHOT) {
+            snapshotElapsedTicks++;
+        }
+    }
+
+    public boolean snapshotTimedOut(int timeoutTicks) {
+        return state == ProgressState.SNAPSHOT && snapshotElapsedTicks >= timeoutTicks;
     }
 
     public boolean isThrottled(int maxInflightAppends) {
@@ -85,8 +116,14 @@ public final class Progress {
         }
     }
 
+    private void forgetSnapshot() {
+        pendingSnapshotIndex = 0;
+        snapshotElapsedTicks = 0;
+    }
+
     @Override
     public String toString() {
-        return "Progress[" + state + " next=" + nextIndex + " match=" + matchIndex + "]";
+        return "Progress[" + state + " next=" + nextIndex + " match=" + matchIndex
+                + (state == ProgressState.SNAPSHOT ? " snapshot=" + pendingSnapshotIndex : "") + "]";
     }
 }

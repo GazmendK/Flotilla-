@@ -89,7 +89,7 @@ construction of the election and commit rules only.
 | Learners (*dissertation* §4.2.1) | `ClusterConfig` | modelled; promotion is Phase 12 |
 | Leadership transfer (*dissertation* §3.10) | `TimeoutNowRequest` | message exists, handled in Phase 12 |
 | ReadIndex (*dissertation* §6.4) | `ReadIndexRequest`, `ReadState` | messages exist, handled in Phase 11 |
-| Snapshots (Figure 13) | `InstallSnapshotRequest` | message exists, handled in Phase 10 |
+| Snapshots (Figure 13) | `RaftNode.handleInstallSnapshot`, `sendSnapshot`, `Progress.SNAPSHOT` | done in the core, see ADR-0025 |
 
 ## Deliberate deviations
 

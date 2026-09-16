@@ -79,6 +79,39 @@ sequenceDiagram
 A rejected append carries a conflict hint — `conflictIndex` and `conflictTerm` — so the leader can
 skip a whole term of divergent entries instead of backing up one index per round trip.
 
+### Catching up a follower the log can no longer reach
+
+Once the leader compacts its log, a follower behind the compacted prefix cannot be caught up by
+`AppendEntries` — the entries it needs are gone. The leader notices because that peer's `nextIndex`
+has fallen below its own first log index, and sends state instead of entries.
+
+```mermaid
+sequenceDiagram
+    participant L as Leader
+    participant F as Follower (far behind)
+
+    Note over L: snapshot taken, log compacted through index 900
+    L->>F: Deliver(AppendEntriesRequest, prevLogIndex 900)
+    F->>L: Deliver(AppendEntriesResponse, rejected, conflictIndex 41)
+    Note over L: nextIndex 41 is below the first log index 901
+    L->>F: InstallSnapshot chunk 1 (offset 0)
+    L->>F: InstallSnapshot chunk 2 (done)
+    Note over F: log replaced, commit index and apply position jump to 900
+    F->>L: Deliver(InstallSnapshotResponse, matchIndex 900, installed)
+    L->>F: Deliver(AppendEntriesRequest, prevLogIndex 900, prevLogTerm from the snapshot)
+```
+
+The core exchanges whole snapshots; the transport splits one into chunks and reassembles it, which
+is what `offset` and `done` are for. See [ADR-0025](adr/0025-whole-snapshots-in-the-core.md).
+
+`InstallSnapshotResponse.matchIndex` is the index through which the follower's log now agrees with
+the leader. It is filled in whether the snapshot was installed, refused as stale, or found to cover
+a prefix the follower already had — so the leader learns where to continue in all three cases and
+treats the answer exactly like the match index in an append reply.
+
+While a snapshot is in flight to a peer, that peer is sent nothing else. The wait is bounded: after
+`snapshotTimeoutTicks` without an answer the transfer starts over.
+
 ### Delivery limits
 
 - At most `maxInflightPerPeer` deliveries to one peer are outstanding at once. A message that finds

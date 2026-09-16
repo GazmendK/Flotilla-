@@ -5,6 +5,7 @@
 package dev.flotilla.sim;
 
 import dev.flotilla.core.ClusterConfig;
+import dev.flotilla.core.InMemorySnapshotStore;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftConfig;
@@ -20,6 +21,7 @@ public final class SimNode {
     private final ClusterConfig cluster;
     private final SimLogStore log = new SimLogStore();
     private final SimStableStore stable = new SimStableStore();
+    private final InMemorySnapshotStore snapshots = new InMemorySnapshotStore();
     private final long baseSeed;
     private final List<LogEntry> appliedHistory = new ArrayList<>();
 
@@ -37,7 +39,12 @@ public final class SimNode {
 
     private RaftNode newRaftInstance() {
         return new RaftNode(
-                config, cluster, log, RandomSource.seeded(baseSeed + restarts * 1_000_003L), stable.recovered());
+                config,
+                cluster,
+                log,
+                snapshots,
+                RandomSource.seeded(baseSeed + restarts * 1_000_003L),
+                stable.recovered());
     }
 
     public NodeId id() {
@@ -54,6 +61,10 @@ public final class SimNode {
 
     public SimStableStore stable() {
         return stable;
+    }
+
+    public InMemorySnapshotStore snapshots() {
+        return snapshots;
     }
 
     public boolean isRunning() {

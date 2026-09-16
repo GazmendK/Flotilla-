@@ -7,9 +7,11 @@ package dev.flotilla.transport.grpc;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnsafeByteOperations;
 import dev.flotilla.core.Bytes;
+import dev.flotilla.core.ClusterConfig;
 import dev.flotilla.core.EntryType;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
+import dev.flotilla.core.Snapshot;
 import dev.flotilla.core.message.AppendEntriesRequest;
 import dev.flotilla.core.message.AppendEntriesResponse;
 import dev.flotilla.core.message.InstallSnapshotRequest;
@@ -24,6 +26,8 @@ import dev.flotilla.wire.v1.DeliverRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 public final class MessageCodec {
 
@@ -62,16 +66,10 @@ public final class MessageCodec {
                 envelope.setRequestVoteResponse(dev.flotilla.wire.v1.RequestVoteResponse.newBuilder()
                         .setVoteGranted(response.voteGranted())
                         .setPreVote(response.preVote()));
-            case InstallSnapshotRequest request ->
-                envelope.setInstallSnapshotRequest(dev.flotilla.wire.v1.InstallSnapshotRequest.newBuilder()
-                        .setLastIncludedIndex(request.lastIncludedIndex())
-                        .setLastIncludedTerm(request.lastIncludedTerm())
-                        .setOffset(request.offset())
-                        .setData(toWire(request.data()))
-                        .setDone(request.done()));
+            case InstallSnapshotRequest request -> envelope.setInstallSnapshotRequest(toWire(request.snapshot()));
             case InstallSnapshotResponse response ->
                 envelope.setInstallSnapshotResponse(dev.flotilla.wire.v1.InstallSnapshotResponse.newBuilder()
-                        .setBytesReceived(response.bytesReceived())
+                        .setMatchIndex(response.matchIndex())
                         .setInstalled(response.installed()));
             case ReadIndexRequest request ->
                 envelope.setReadIndexRequest(
@@ -128,21 +126,11 @@ public final class MessageCodec {
                     dev.flotilla.wire.v1.RequestVoteResponse body = envelope.getRequestVoteResponse();
                     yield new RequestVoteResponse(from, to, term, body.getVoteGranted(), body.getPreVote());
                 }
-                case INSTALL_SNAPSHOT_REQUEST -> {
-                    dev.flotilla.wire.v1.InstallSnapshotRequest body = envelope.getInstallSnapshotRequest();
-                    yield new InstallSnapshotRequest(
-                            from,
-                            to,
-                            term,
-                            body.getLastIncludedIndex(),
-                            body.getLastIncludedTerm(),
-                            body.getOffset(),
-                            fromWire(body.getData()),
-                            body.getDone());
-                }
+                case INSTALL_SNAPSHOT_REQUEST ->
+                    new InstallSnapshotRequest(from, to, term, fromWire(envelope.getInstallSnapshotRequest()));
                 case INSTALL_SNAPSHOT_RESPONSE -> {
                     dev.flotilla.wire.v1.InstallSnapshotResponse body = envelope.getInstallSnapshotResponse();
-                    yield new InstallSnapshotResponse(from, to, term, body.getBytesReceived(), body.getInstalled());
+                    yield new InstallSnapshotResponse(from, to, term, body.getMatchIndex(), body.getInstalled());
                 }
                 case READ_INDEX_REQUEST ->
                     new ReadIndexRequest(
@@ -191,6 +179,35 @@ public final class MessageCodec {
             case ENTRY_TYPE_CONFIGURATION -> EntryType.CONFIGURATION;
             case ENTRY_TYPE_UNSPECIFIED, UNRECOGNIZED -> throw new WireFormatException("Unknown entry type " + type);
         };
+    }
+
+    private static dev.flotilla.wire.v1.InstallSnapshotRequest.Builder toWire(Snapshot snapshot) {
+        dev.flotilla.wire.v1.InstallSnapshotRequest.Builder body =
+                dev.flotilla.wire.v1.InstallSnapshotRequest.newBuilder()
+                        .setLastIncludedIndex(snapshot.lastIncludedIndex())
+                        .setLastIncludedTerm(snapshot.lastIncludedTerm())
+                        .setOffset(0)
+                        .setDone(true)
+                        .setData(toWire(snapshot.data()));
+        for (NodeId voter : snapshot.cluster().voters()) {
+            body.addVoters(voter.value());
+        }
+        for (NodeId learner : snapshot.cluster().learners()) {
+            body.addLearners(learner.value());
+        }
+        return body;
+    }
+
+    private static Snapshot fromWire(dev.flotilla.wire.v1.InstallSnapshotRequest body) {
+        SortedSet<NodeId> voters = new TreeSet<>();
+        body.getVotersList().forEach(voter -> voters.add(NodeId.of(voter)));
+        SortedSet<NodeId> learners = new TreeSet<>();
+        body.getLearnersList().forEach(learner -> learners.add(NodeId.of(learner)));
+        return new Snapshot(
+                body.getLastIncludedIndex(),
+                body.getLastIncludedTerm(),
+                new ClusterConfig(voters, learners),
+                fromWire(body.getData()));
     }
 
     private static ByteString toWire(Bytes value) {

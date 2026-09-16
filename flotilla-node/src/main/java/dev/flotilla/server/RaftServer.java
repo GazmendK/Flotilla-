@@ -12,6 +12,7 @@ import dev.flotilla.core.RaftConfig;
 import dev.flotilla.core.RaftNode;
 import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.core.port.RandomSource;
+import dev.flotilla.core.port.SnapshotStore;
 import dev.flotilla.kv.StateMachine;
 import dev.flotilla.storage.FileStableStore;
 import dev.flotilla.storage.SegmentedLogStore;
@@ -95,7 +96,8 @@ public final class RaftServer implements AutoCloseable {
 
         NodeId id = raftConfig.nodeId();
         long seed = System.nanoTime() ^ ((long) id.value().hashCode() << 32);
-        RaftNode raft = new RaftNode(raftConfig, cluster, log, RandomSource.seeded(seed), persisted);
+        RaftNode raft =
+                new RaftNode(raftConfig, cluster, log, SnapshotStore.none(), RandomSource.seeded(seed), persisted);
 
         ProposalRegistry proposals = new ProposalRegistry();
         ApplyLoop apply = new ApplyLoop(stateMachine, proposals, serverConfig.applyQueueCapacity());

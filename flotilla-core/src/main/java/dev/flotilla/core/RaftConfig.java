@@ -15,7 +15,8 @@ public record RaftConfig(
         boolean checkQuorum,
         int maxEntriesPerAppend,
         long maxAppendBytes,
-        int maxInflightAppends) {
+        int maxInflightAppends,
+        int snapshotTimeoutTicks) {
     public static final int MIN_ELECTION_TO_HEARTBEAT_RATIO = 3;
 
     public RaftConfig {
@@ -53,6 +54,12 @@ public record RaftConfig(
             throw new IllegalArgumentException("maxInflightAppends must be at least 1, was " + maxInflightAppends
                     + ". A value of 1 disables pipelining.");
         }
+        if (snapshotTimeoutTicks < electionTimeoutMaxTicks) {
+            throw new IllegalArgumentException("snapshotTimeoutTicks (" + snapshotTimeoutTicks
+                    + ") must be at least electionTimeoutMaxTicks (" + electionTimeoutMaxTicks
+                    + "). Resending a snapshot sooner than a follower could have answered wastes the "
+                    + "leader upload bandwidth the follower still needs to finish the first transfer.");
+        }
     }
 
     public static Builder builder(NodeId nodeId) {
@@ -69,6 +76,7 @@ public record RaftConfig(
         private int maxEntriesPerAppend = 64;
         private long maxAppendBytes = 1024L * 1024L;
         private int maxInflightAppends = 16;
+        private int snapshotTimeoutTicks = 40;
 
         private Builder(NodeId nodeId) {
             this.nodeId = Objects.requireNonNull(nodeId, "nodeId");
@@ -110,6 +118,11 @@ public record RaftConfig(
             return this;
         }
 
+        public Builder snapshotTimeoutTicks(int ticks) {
+            this.snapshotTimeoutTicks = ticks;
+            return this;
+        }
+
         public RaftConfig build() {
             return new RaftConfig(
                     nodeId,
@@ -120,7 +133,8 @@ public record RaftConfig(
                     checkQuorum,
                     maxEntriesPerAppend,
                     maxAppendBytes,
-                    maxInflightAppends);
+                    maxInflightAppends,
+                    snapshotTimeoutTicks);
         }
     }
 

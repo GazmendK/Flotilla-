@@ -8,8 +8,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.flotilla.core.Bytes;
+import dev.flotilla.core.ClusterConfig;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
+import dev.flotilla.core.Snapshot;
 import dev.flotilla.core.message.AppendEntriesRequest;
 import dev.flotilla.core.message.AppendEntriesResponse;
 import dev.flotilla.core.message.InstallSnapshotRequest;
@@ -26,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.SplittableRandom;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -53,7 +56,17 @@ class MessageCodecTest {
                 new AppendEntriesResponse(B, A, 3, true, 10, 0, 0),
                 new RequestVoteRequest(A, B, 4, 10, 3, true),
                 new RequestVoteResponse(B, A, 4, true, false),
-                new InstallSnapshotRequest(A, B, 5, 100, 4, 0, Bytes.ofUtf8("chunk"), false),
+                new InstallSnapshotRequest(
+                        A, B, 5, new Snapshot(100, 4, ClusterConfig.ofVoters(A, B), Bytes.ofUtf8("state"))),
+                new InstallSnapshotRequest(
+                        A,
+                        B,
+                        5,
+                        new Snapshot(
+                                100,
+                                4,
+                                new ClusterConfig(new TreeSet<>(Set.of(A)), new TreeSet<>(Set.of(B))),
+                                Bytes.EMPTY)),
                 new InstallSnapshotResponse(B, A, 5, 5, true),
                 new ReadIndexRequest(A, B, 5, Bytes.ofUtf8("r1")),
                 new ReadIndexResponse(B, A, 5, Bytes.ofUtf8("r1"), 42),

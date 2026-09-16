@@ -11,6 +11,7 @@ import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.core.message.RequestVoteRequest;
 import dev.flotilla.core.message.RequestVoteResponse;
 import dev.flotilla.core.port.RandomSource;
+import dev.flotilla.core.port.SnapshotStore;
 import java.util.List;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
@@ -27,7 +28,12 @@ class VoteRulesTest {
 
     private RaftNode nodeAtTerm(long term) {
         return new RaftNode(
-                RaftConfig.defaults(N1), CLUSTER, log, RandomSource.seeded(1), new HardState(term, null, 0));
+                RaftConfig.defaults(N1),
+                CLUSTER,
+                log,
+                SnapshotStore.none(),
+                RandomSource.seeded(1),
+                new HardState(term, null, 0));
     }
 
     private void fillLog(long term, int count) {
