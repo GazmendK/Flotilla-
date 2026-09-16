@@ -7,7 +7,10 @@ package dev.flotilla.kv;
 import dev.flotilla.core.Bytes;
 
 @FunctionalInterface
-public interface StateCapture {
+public interface StateCapture extends AutoCloseable {
 
     Bytes serialize();
+
+    @Override
+    default void close() {}
 }

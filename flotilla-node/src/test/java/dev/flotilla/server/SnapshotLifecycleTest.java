@@ -116,7 +116,7 @@ class SnapshotLifecycleTest {
     }
 
     @Test
-    @DisplayName("the apply loop stops only to copy the state, not to serialize it")
+    @DisplayName("the apply loop stops only to freeze the state, not to serialize it")
     void theApplyPauseIsShorterThanTheSerialization() throws Exception {
         try (RaftServer server = start(new KvStateMachine())) {
             assertThat(server.awaitLeadership(PATIENCE)).isTrue();

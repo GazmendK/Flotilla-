@@ -50,9 +50,9 @@ not stable before 1.0.0.
 - `docs/operations.md`: how to back a cluster up, how to restore it, how large snapshots get, which
   numbers to watch, and what each of them means when it goes wrong.
 - Snapshots are taken at runtime and the log no longer grows without bound. The apply loop stops only
-  long enough to copy the state, a background thread serializes and writes it, and the event loop
-  discards the compacted prefix. Measured on 200,000 keys: 15 ms to copy, 29 ms to encode, so two
-  thirds of the pause is gone — and a test fails if copying ever stops being the cheap half.
+  long enough to freeze the state, a background thread serializes and writes it, and the event loop
+  discards the compacted prefix. Freezing is constant time — about 2 µs for 200,000 keys: writes made
+  while a snapshot is being written go into an overlay that is folded back in afterwards.
 - A node restarts from its newest snapshot plus the entries after it instead of replaying its whole
   history, and `RaftServer` reports the snapshot count, the compaction count, the restore count and
   the longest apply pause.
@@ -190,6 +190,11 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- The snapshot pause was measured on one machine. Copying the key-value map was supposed to be the
+  cheap half of a snapshot — 15 ms against 29 ms of encoding — and a test asserted it. On CI copying
+  took 43 ms against 41 on Linux and 31 ms against 8 on macOS, and the test failed. The map is now
+  layered instead of copied: a snapshot freezes it in constant time, about 2 µs for 200,000 keys, and
+  writes made meanwhile go into an overlay that is folded back in afterwards.
 - Group commit had no physical effect with the default storage policy. `FsyncPolicy.ALWAYS` forced
   the log after every append, and the consensus core appends each proposal as it steps it — so every
   proposal paid its own `fsync` before the event loop could batch anything, and the published "33

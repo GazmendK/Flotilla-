@@ -7,7 +7,6 @@ package dev.flotilla.kv;
 import dev.flotilla.core.Bytes;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
@@ -18,7 +17,7 @@ public final class KvStateMachine implements StateMachine {
 
     public static final long DEFAULT_SESSION_TIMEOUT_ENTRIES = 10_000;
 
-    private final NavigableMap<Bytes, Bytes> data = new TreeMap<>();
+    private final LayeredMap<Bytes, Bytes> data = new LayeredMap<>();
     private final SessionRegistry sessions = new SessionRegistry();
     private final long sessionTimeoutEntries;
 
@@ -65,22 +64,31 @@ public final class KvStateMachine implements StateMachine {
 
     @Override
     public Bytes snapshot() {
-        return KvSnapshotCodec.encode(lastAppliedIndex, data, sessions.all());
+        return KvSnapshotCodec.encode(lastAppliedIndex, data.view(), sessions.all());
     }
 
     @Override
     public StateCapture capture() {
-        NavigableMap<Bytes, Bytes> frozenData = new TreeMap<>(data);
+        LayeredMap.Frozen<Bytes, Bytes> frozen = data.freeze();
         NavigableMap<Long, Session> frozenSessions = new TreeMap<>(sessions.all());
         long index = lastAppliedIndex;
-        return () -> KvSnapshotCodec.encode(index, frozenData, frozenSessions);
+        return new StateCapture() {
+            @Override
+            public Bytes serialize() {
+                return KvSnapshotCodec.encode(index, frozen.contents(), frozenSessions);
+            }
+
+            @Override
+            public void close() {
+                frozen.release();
+            }
+        };
     }
 
     @Override
     public void restore(Bytes snapshot) {
         KvSnapshotCodec.Snapshot restored = KvSnapshotCodec.decode(snapshot);
-        data.clear();
-        data.putAll(restored.data());
+        data.replaceWith(restored.data());
         sessions.replaceWith(restored.sessions());
         lastAppliedIndex = restored.lastAppliedIndex();
     }
@@ -108,9 +116,7 @@ public final class KvStateMachine implements StateMachine {
 
     public List<KeyValue> entries() {
         List<KeyValue> entries = new ArrayList<>(data.size());
-        for (Map.Entry<Bytes, Bytes> entry : data.entrySet()) {
-            entries.add(new KeyValue(entry.getKey(), entry.getValue()));
-        }
+        data.forEach((key, value) -> entries.add(new KeyValue(key, value)));
         return entries;
     }
 
@@ -158,13 +164,10 @@ public final class KvStateMachine implements StateMachine {
             return List.of();
         }
         List<KeyValue> found = new ArrayList<>();
-        for (Map.Entry<Bytes, Bytes> entry : data.subMap(scan.fromInclusive(), true, scan.toExclusive(), false)
-                .entrySet()) {
-            if (found.size() == scan.limit()) {
-                break;
-            }
-            found.add(new KeyValue(entry.getKey(), entry.getValue()));
-        }
+        data.forEachInRange(scan.fromInclusive(), scan.toExclusive(), (key, value) -> {
+            found.add(new KeyValue(key, value));
+            return found.size() < scan.limit();
+        });
         return found;
     }
 }

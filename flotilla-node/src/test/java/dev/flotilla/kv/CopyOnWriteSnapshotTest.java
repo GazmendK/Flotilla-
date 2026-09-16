@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.flotilla.core.Bytes;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -58,25 +59,57 @@ class CopyOnWriteSnapshotTest {
         assertThat(restored.lastAppliedIndex()).isEqualTo(1);
     }
 
-    @Test
-    @DisplayName("copying the state costs a fraction of encoding it, which is why the apply loop only copies")
-    void copyingIsMuchCheaperThanEncoding() {
-        KvStateMachine machine = filled(KEYS);
-        long warmCopy = nanosOf(machine::capture);
-        long warmEncode = nanosOf(machine.capture()::serialize);
-        assertThat(warmCopy + warmEncode).isPositive();
+    private static long medianCaptureNanos(KvStateMachine machine) {
+        long[] samples = new long[21];
+        for (int sample = 0; sample < samples.length; sample++) {
+            long start = System.nanoTime();
+            StateCapture capture = machine.capture();
+            samples[sample] = System.nanoTime() - start;
+            capture.close();
+            assertThat(machine.get(Bytes.ofUtf8("key-1"))).isPresent();
+        }
+        Arrays.sort(samples);
+        return samples[samples.length / 2];
+    }
 
-        long copyNanos = nanosOf(machine::capture);
-        long encodeNanos = nanosOf(machine.capture()::serialize);
+    @Test
+    @DisplayName("freezing the state costs the same for two hundred thousand keys as for a thousand")
+    void aCaptureDoesNotGrowWithTheState() {
+        long small = medianCaptureNanos(filled(1_000));
+        KvStateMachine large = filled(KEYS);
+        long frozen = medianCaptureNanos(large);
+        long encodeNanos;
+        try (StateCapture capture = large.capture()) {
+            encodeNanos = nanosOf(capture::serialize);
+        }
 
         System.out.println(
-                "capture of " + KEYS + " keys: " + Duration.ofNanos(copyNanos).toMillis() + " ms, serialization: "
-                        + Duration.ofNanos(encodeNanos).toMillis() + " ms");
-        assertThat(copyNanos)
+                "capture of 1000 keys: " + small + " ns, of " + KEYS + " keys: " + frozen + " ns, serialization of "
+                        + KEYS + " keys: " + Duration.ofNanos(encodeNanos).toMillis() + " ms");
+        assertThat(frozen)
                 .as(
-                        "copying %d keys took %d ns and encoding them took %d ns; if copying is not the cheap half "
-                                + "there is no reason to split the work at all",
-                        KEYS, copyNanos, encodeNanos)
-                .isLessThan(encodeNanos);
+                        "the apply loop paused %d ns to freeze %d keys; anything that grows with the data would take "
+                                + "tens of milliseconds here",
+                        frozen, KEYS)
+                .isLessThan(Duration.ofMillis(1).toNanos());
+    }
+
+    @Test
+    @DisplayName("writes made while a snapshot is being written are neither in it nor lost")
+    void writesDuringASnapshotAreKeptOutOfItAndKept() {
+        KvStateMachine machine = filled(100);
+        StateCapture capture = machine.capture();
+        machine.apply(101, put("key-1", "changed"));
+        machine.apply(102, put("late", "arrival"));
+
+        KvStateMachine fromSnapshot = new KvStateMachine();
+        fromSnapshot.restore(capture.serialize());
+        capture.close();
+
+        assertThat(fromSnapshot.get(Bytes.ofUtf8("key-1"))).contains(Bytes.ofUtf8("v".repeat(VALUE_BYTES)));
+        assertThat(fromSnapshot.get(Bytes.ofUtf8("late"))).isEmpty();
+        assertThat(machine.get(Bytes.ofUtf8("key-1"))).contains(Bytes.ofUtf8("changed"));
+        assertThat(machine.get(Bytes.ofUtf8("late"))).contains(Bytes.ofUtf8("arrival"));
+        assertThat(machine.size()).isEqualTo(101);
     }
 }

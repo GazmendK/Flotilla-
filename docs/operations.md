@@ -98,7 +98,7 @@ restart.
 | `snapshotsTaken()` | climbing slowly | flat while the log grows: the policy never fires |
 | `logCompactions()` | tracks `snapshotsTaken()` | flat while snapshots are taken: compaction is being refused |
 | `snapshotRestores()` | one per restart once a snapshot exists | climbing between restarts: this node keeps falling behind the compacted prefix |
-| `longestSnapshotApplyPause()` | tens of milliseconds | approaching the election timeout: the state machine is too large to copy in time |
+| `longestSnapshotApplyPause()` | microseconds | milliseconds: the session table, which is still copied, has grown very large |
 | `firstLogIndex()` | rises over time | stuck at 1 while the disk fills: nothing is being compacted |
 
 A node whose `snapshotRestores()` climbs without being restarted is a node that cannot keep up. Either its disk is

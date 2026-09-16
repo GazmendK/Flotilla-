@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -86,11 +87,16 @@ final class SnapshotManager implements WritableSnapshotStore, AutoCloseable {
         totalPauseNanos.addAndGet(pause);
         bytesSinceSnapshot = 0;
 
-        worker.execute(() -> writeAndCompact(capture, appliedIndex, appliedTerm));
+        try {
+            worker.execute(() -> writeAndCompact(capture, appliedIndex, appliedTerm));
+        } catch (RejectedExecutionException shuttingDown) {
+            capture.close();
+            inProgress.set(false);
+        }
     }
 
     private void writeAndCompact(StateCapture capture, long index, long term) {
-        try {
+        try (capture) {
             if (index <= covered.get()) {
                 return;
             }

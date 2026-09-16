@@ -25,13 +25,13 @@ So the work does not belong to one thread. It belongs to three.
 
 | Step | Thread | What it costs |
 |---|---|---|
-| `StateMachine.capture()` — freeze a consistent view | apply loop | 200k keys: 15 ms, pointer copies only |
-| serialize, write a temp file, fsync, rename, fsync the directory | snapshot worker | 200k keys: 29 ms of encoding, plus the disk |
+| `StateMachine.capture()` — freeze a consistent view | apply loop | constant, see the amendment below |
+| serialize, write a temp file, fsync, rename, fsync the directory | snapshot worker | grows with the data, plus the disk |
 | `RaftNode.compactLog(index)` | event loop, as a `Compact` event | a rename and two fsyncs |
 
 `capture()` returns something that can be serialized later and is unaffected by everything applied
-afterwards. `KvStateMachine` implements it by copying the map and the session table — every key and
-value is immutable, so only the tree nodes are new. The default implementation in `StateMachine`
+afterwards. `KvStateMachine` implements it by freezing its map and copying the session table; see the
+amendment at the end. The default implementation in `StateMachine`
 serializes immediately, which is correct but pauses for the whole cost; a state machine that cares
 overrides it.
 
@@ -57,13 +57,12 @@ snapshot.
 ## Alternatives considered
 
 **Serialize on the apply loop.** One thread, no coordination, no `capture()`. Rejected on the
-measurement: it is the 15 ms *plus* the 29 ms, and the 29 ms grows with the payload rather than the
+measurement: the whole encoding would be paid on the apply loop, and it grows with the payload rather than the
 key count.
 
 **A persistent sorted map, so that a capture is one reference assignment.** This is the right answer
 and it is not built. The JDK has no persistent sorted map, and writing one is a project of its own.
-What is built removes two thirds of the pause; the remaining third is O(entries) and the number is
-in `docs/threading-model.md` rather than hidden.
+The amendment below explains why it turned out not to be needed.
 
 **`fork()`, the way Redis does it.** Copy-on-write at the page level, essentially free. Not
 available to a JVM process.
@@ -79,3 +78,23 @@ cluster would keep writing identical snapshots, and a busy one would still outru
   moment; compaction simply does not happen until one does.
 - `RaftServer` exposes the snapshot count, the compaction count, the restore count and the longest
   apply pause, so the next phase has something to put on a dashboard.
+
+## Amendment, 2026-09-16: freezing instead of copying
+
+The measurement this record was built on did not survive CI. Copying 200,000 keys took 15 ms against
+29 ms of encoding on the machine it was written on; on CI it took 43 ms against 41 ms on Linux and
+31 ms against 8 ms on macOS. `CopyOnWriteSnapshotTest` asserted that copying was the cheaper half,
+and failed — which is what it was there for. The claim that two thirds of the pause were gone held on
+one laptop.
+
+`KvStateMachine` no longer copies. Its map is a `LayeredMap`: `capture()` freezes the current map
+and routes every later write into an overlay, with tombstones for deletes, until the snapshot worker
+releases the view; the apply loop then folds the overlay back in. Freezing is constant time — about
+2 µs for 200,000 keys, the same as for a thousand — and the fold costs what was written during the
+snapshot, not what is stored. The alternative above that this record called "the right answer and not
+built" was a persistent sorted map; layering gets the same constant-time capture without one, because
+only one snapshot is ever in flight.
+
+`LayeredMapTest` interleaves writes, deletes, scans, freezes, releases and restores at random and
+compares the result with a plain map after every step. Writing into the frozen map, ignoring
+tombstones when reading, and never releasing a capture each make it or the snapshot tests fail.

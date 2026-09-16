@@ -87,17 +87,29 @@ loop is allowed to touch. So the work is split across all three:
 
 | Step | Thread | Cost |
 |---|---|---|
-| Copy the state | apply loop | 200k keys: **15 ms**, pointer copies only |
-| Serialize, write, fsync, rename | snapshot worker | 200k keys: **29 ms** of encoding, plus the disk |
+| Freeze the state | apply loop | constant: **about 2 µs**, for a thousand keys or two hundred thousand |
+| Serialize, write, fsync, rename | snapshot worker | grows with the data, plus the disk |
+| Fold the writes made meanwhile back in | apply loop | grows with the writes made *during* the snapshot, not with the data |
 | Discard the compacted prefix | event loop | a rename and two fsyncs |
 
-Only one snapshot runs at a time; a second trigger while one is in flight is counted and ignored.
-The numbers above are measured by `CopyOnWriteSnapshotTest`, which fails if copying ever stops being
-the cheap half — because then there would be no reason to split the work at all.
+Freezing does not copy anything. The key-value map is layered: while a snapshot is being written,
+the frozen map is left alone and every write goes into a small overlay on top of it, with a tombstone
+for each delete. Reads and scans see the overlay first. When the worker has finished it releases the
+view, and the apply loop folds the overlay back in at its next operation. Only one view can be frozen
+at a time; a second trigger while one is in flight is counted and ignored. The session table is still
+copied, which costs O(open sessions) — bounded by the number of clients, not by the data.
 
-Two thirds of the pause is gone and the remaining third is still O(entries). Removing it needs a
-sorted map with structural sharing, so that a capture is a single reference assignment. That is not
-built, and the number above is what it costs not to have built it.
+`CopyOnWriteSnapshotTest` fails if freezing 200,000 keys takes a millisecond or more.
+
+### What this replaced
+
+The first version copied the map instead: every key and value is immutable, so a copy was only new
+tree nodes, and on the machine it was written on that took 15 ms against 29 ms of encoding. The test
+guarding that claim asserted that copying was the cheaper half. On CI it was not — 43 ms against
+41 ms on Linux, 31 ms against 8 ms on macOS — and the claim that two thirds of the pause were gone was
+true of one laptop. Encoding writes one large array in bulk; copying allocates two hundred thousand
+tree nodes, and which is faster depends on the machine. Layering removes the question: nothing grows
+with the data any more.
 
 An **incoming** snapshot is a different matter: it is written on the event loop, before the response
 that promises it is durable goes out. That is the one place the loop deliberately blocks on I/O, and
