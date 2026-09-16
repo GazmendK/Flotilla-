@@ -15,6 +15,7 @@ accelerated on every CPU this will realistically run on.
   logbase                         64 bytes, two 32-byte slots: where the log begins
   00000000000000000001.wal        segment starting at log index 1
   00000000000000000513.wal        segment starting at log index 513
+  snapshot-00000000000000000512.snap   state through log index 512
 ```
 
 Segment file names are the zero-padded 20-digit index of their first entry, so lexicographic
@@ -166,6 +167,63 @@ Deleting first would leave the old base beside a log with its committed prefix g
 order, a crash at any point leaves either the old log or the new one — never a mixture.
 `everyCrashDuringResetNeverResurrectsTheOldLog` and `everyCrashDuringCompactionRecovers` crash at
 every durability operation, and swapping either order makes them fail.
+
+## Snapshot files
+
+A snapshot is one file named `snapshot-<20-digit last included index>.snap`, so the newest is the
+last one a plain `ls` prints.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | magic `0x464C5350` |
+| 4 | 4 | format version, currently 1 |
+| 8 | 4 | body length in bytes |
+| 12 | 4 | CRC32C of the body |
+| 16 | *n* | body |
+
+The body holds the last included index and term, the cluster configuration the snapshot was taken
+under, and the state machine's own encoding of its state:
+
+```
+int64  last included index
+int64  last included term
+int32  voter count,   then per voter:   int32 length + UTF-8 id
+int32  learner count, then per learner: int32 length + UTF-8 id
+int32  payload length, then the payload
+```
+
+The last included index and term are not decoration: they become `prevLogIndex` and `prevLogTerm`
+for the first `AppendEntries` after the snapshot. Lose the term and the consistency check fails
+forever, and the follower loops between snapshot and rejection.
+
+Decoding is total. Every length and count is bounded before anything is allocated, and the body is
+checked against its CRC before it is parsed at all — `SnapshotStoreTest` flips every bit of every
+byte of a snapshot file and asserts each one is caught.
+
+### Writing one
+
+```
+write   snapshot-<index>.snap.tmp
+fsync   the file
+rename  .snap.tmp -> .snap          (atomic)
+fsync   the directory
+```
+
+A crash at any point leaves either the previous snapshot or the new one, never half of either: the
+final name only ever appears on a file whose bytes are already durable. `CrashConsistencyTest`
+crashes at every one of those operations and runs the whole schedule twice — once against a
+filesystem where a directory entry becomes durable only at a directory fsync, and once against one
+that journals metadata eagerly. Writing straight to the final name passes the first model and fails
+the second, which is the case the rename exists for.
+
+Temporary files left behind by a crash are deleted on start. A snapshot that fails its checksum is
+skipped and the one before it is used, which is why more than one is kept.
+
+### Retention
+
+The newest two snapshots are kept by default. Keeping one is allowed and keeping none is not: a
+follower that falls behind a compacted prefix can only be caught up from a snapshot, so throwing the
+last one away while the log is already compacted would strand it for good.
 
 ## Recovery
 

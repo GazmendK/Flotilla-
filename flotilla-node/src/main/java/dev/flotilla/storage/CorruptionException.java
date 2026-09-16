@@ -10,6 +10,10 @@ public final class CorruptionException extends RuntimeException {
         super(detail);
     }
 
+    public CorruptionException(String detail, Throwable cause) {
+        super(detail, cause);
+    }
+
     public static CorruptionException at(Object file, long offset, String detail) {
         return new CorruptionException(file + " at offset " + offset + ": " + detail);
     }

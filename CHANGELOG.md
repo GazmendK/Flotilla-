@@ -12,6 +12,14 @@ not stable before 1.0.0.
 
 ### Added
 
+- Snapshot files on disk: temporary file, fsync, atomic rename, directory fsync, with the format and
+  the write sequence documented byte for byte. A crash at any of those operations leaves either the
+  previous snapshot or the new one and never half of either, and the whole crash schedule now runs
+  against two filesystem models — one where a directory entry becomes durable only at a directory
+  fsync, and one that journals metadata eagerly. Writing straight to the final name passes the first
+  and fails the second, which is the case the rename exists for.
+- The newest two snapshots are kept. A snapshot that fails its checksum is skipped in favour of the
+  one before it, and a temporary file left behind by a crash is deleted on start.
 - The simulation now snapshots and compacts while it runs, so a node that was down while the cluster
   moved past it is caught up by a real `InstallSnapshot` under crashes and partitions. Its state
   machine folds every applied entry into a digest and a snapshot carries that digest, which turns

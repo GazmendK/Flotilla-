@@ -23,6 +23,7 @@ public final class FaultInjectingFileIo implements FileIo {
     private long crashAtWrite = -1;
     private long tearAtWrite = -1;
     private long failAtWrite = -1;
+    private boolean eagerMetadata;
 
     public long writeCount() {
         return writeCount;
@@ -44,6 +45,10 @@ public final class FaultInjectingFileIo implements FileIo {
         crashAtWrite = -1;
         tearAtWrite = -1;
         failAtWrite = -1;
+    }
+
+    public void eagerMetadata(boolean enabled) {
+        eagerMetadata = enabled;
     }
 
     public void resetWriteCount() {
@@ -88,6 +93,9 @@ public final class FaultInjectingFileIo implements FileIo {
     @Override
     public FileHandle open(Path path) {
         VirtualFile file = files.computeIfAbsent(path, ignored -> new VirtualFile());
+        if (eagerMetadata) {
+            durableEntries.putIfAbsent(path, file);
+        }
         return new VirtualHandle(path, file);
     }
 
@@ -95,6 +103,23 @@ public final class FaultInjectingFileIo implements FileIo {
     public void delete(Path path) {
         crashBefore("delete of " + path);
         files.remove(path);
+        if (eagerMetadata) {
+            durableEntries.remove(path);
+        }
+    }
+
+    @Override
+    public void move(Path source, Path target) {
+        crashBefore("rename of " + source + " to " + target);
+        VirtualFile file = files.remove(source);
+        if (file == null) {
+            throw new IllegalStateException("Cannot move " + source + "; it does not exist");
+        }
+        files.put(target, file);
+        if (eagerMetadata) {
+            durableEntries.remove(source);
+            durableEntries.put(target, file);
+        }
     }
 
     @Override

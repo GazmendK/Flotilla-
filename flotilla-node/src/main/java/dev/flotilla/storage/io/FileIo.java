@@ -19,5 +19,7 @@ public interface FileIo {
 
     void delete(Path path);
 
+    void move(Path source, Path target);
+
     void syncDirectory(Path directory);
 }

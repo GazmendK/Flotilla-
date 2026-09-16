@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
@@ -62,6 +63,15 @@ public final class RealFileIo implements FileIo {
             Files.deleteIfExists(path);
         } catch (IOException e) {
             throw new UncheckedIOException("Cannot delete " + path, e);
+        }
+    }
+
+    @Override
+    public void move(Path source, Path target) {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot move " + source + " to " + target, e);
         }
     }
 

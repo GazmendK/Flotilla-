@@ -7,9 +7,11 @@ package dev.flotilla.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.flotilla.core.Bytes;
+import dev.flotilla.core.ClusterConfig;
 import dev.flotilla.core.HardState;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
+import dev.flotilla.core.Snapshot;
 import dev.flotilla.storage.io.FaultInjectingFileIo;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,6 +20,8 @@ import java.util.Optional;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class CrashConsistencyTest {
 
@@ -426,6 +430,55 @@ class CrashConsistencyTest {
                                     crashPoint, total, index)
                             .contains(newLog.get((int) (index - RESET_TO - 1)));
                 }
+            }
+        }
+    }
+
+    private static Snapshot snapshotThrough(long index) {
+        return new Snapshot(
+                index,
+                index / 10 + 1,
+                ClusterConfig.ofVoters(NodeId.of("n1"), NodeId.of("n2")),
+                Bytes.ofUtf8("state through " + index + " " + "p".repeat(400)));
+    }
+
+    @ParameterizedTest(name = "directory entries durable on fsync only: {0}")
+    @ValueSource(booleans = {false, true})
+    @DisplayName("a crash anywhere while a snapshot is written leaves the previous one intact and no partial file")
+    void everyCrashDuringASnapshotWriteKeepsThePreviousOne(boolean eagerMetadata) {
+        int total = 24;
+        for (int crashPoint = 1; crashPoint <= total; crashPoint++) {
+            FaultInjectingFileIo io = new FaultInjectingFileIo();
+            io.eagerMetadata(eagerMetadata);
+            FileSnapshotStore store = FileSnapshotStore.open(StorageDirectory.open(io, DIRECTORY), 2);
+            store.save(snapshotThrough(10));
+
+            io.resetWriteCount();
+            io.crashAtWrite(crashPoint);
+            try {
+                store.save(snapshotThrough(20));
+            } catch (FaultInjectingFileIo.SimulatedCrash expected) {
+                assertThat(expected).hasMessageContaining("Simulated");
+            }
+            io.clearFaults();
+
+            FileSnapshotStore recovered = FileSnapshotStore.open(StorageDirectory.open(io, DIRECTORY), 2);
+            Optional<Snapshot> latest = recovered.latest();
+            assertThat(latest)
+                    .as(
+                            "crash at operation %d of %d left no usable snapshot at all (eager metadata: %s)",
+                            crashPoint, total, eagerMetadata)
+                    .isPresent();
+            assertThat(latest.orElseThrow())
+                    .as("crash at operation %d of %d recovered a snapshot nobody wrote", crashPoint, total)
+                    .isIn(snapshotThrough(10), snapshotThrough(20));
+
+            for (Path file : recovered.files()) {
+                assertThat(recovered.read(file))
+                        .as(
+                                "crash at operation %d of %d left %s half written under its final name (eager metadata: %s)",
+                                crashPoint, total, file, eagerMetadata)
+                        .isIn(snapshotThrough(10), snapshotThrough(20));
             }
         }
     }
