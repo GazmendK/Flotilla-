@@ -12,6 +12,13 @@ not stable before 1.0.0.
 
 ### Added
 
+- Snapshots are taken at runtime and the log no longer grows without bound. The apply loop stops only
+  long enough to copy the state, a background thread serializes and writes it, and the event loop
+  discards the compacted prefix. Measured on 200,000 keys: 15 ms to copy, 29 ms to encode, so two
+  thirds of the pause is gone — and a test fails if copying ever stops being the cheap half.
+- A node restarts from its newest snapshot plus the entries after it instead of replaying its whole
+  history, and `RaftServer` reports the snapshot count, the compaction count, the restore count and
+  the longest apply pause.
 - Snapshot files on disk: temporary file, fsync, atomic rename, directory fsync, with the format and
   the write sequence documented byte for byte. A crash at any of those operations leaves either the
   previous snapshot or the new one and never half of either, and the whole crash schedule now runs

@@ -23,6 +23,7 @@ it is a performance one.
 |---|---|---|
 | `flotilla-<id>-eventloop` | `RaftNode`, `SegmentedLogStore`, `FileStableStore` | the state machine |
 | `flotilla-<id>-apply` | the `StateMachine`, and the applied index | `RaftNode`, the log, the network |
+| `flotilla-<id>-snapshot` | serializing and writing one snapshot at a time | `RaftNode`, the log, the live state machine |
 | `flotilla-<id>-ticker` | nothing — it only offers a `Tick` | everything else |
 
 Callers on any other thread read `volatile` fields the two loops publish. Nothing outside the event
@@ -76,6 +77,31 @@ the disk; [ADR-0018](adr/0018-apply-off-the-loop-fsync-on-it.md) records how tha
 Batching does not weaken any ordering rule. Messages still leave only after the hard state and the
 log are durable, because that ordering lives inside `processReady()` and a batch produces exactly
 one of those.
+
+## Taking a snapshot without stalling anything
+
+Serializing the whole state machine takes long enough to matter. Doing it on the apply loop stalls
+every commit behind it; doing it on the event loop stalls heartbeats, and a stalled heartbeat is an
+election. Compaction, on the other hand, touches the log and the Raft state, which only the event
+loop is allowed to touch. So the work is split across all three:
+
+| Step | Thread | Cost |
+|---|---|---|
+| Copy the state | apply loop | 200k keys: **15 ms**, pointer copies only |
+| Serialize, write, fsync, rename | snapshot worker | 200k keys: **29 ms** of encoding, plus the disk |
+| Discard the compacted prefix | event loop | a rename and two fsyncs |
+
+Only one snapshot runs at a time; a second trigger while one is in flight is counted and ignored.
+The numbers above are measured by `CopyOnWriteSnapshotTest`, which fails if copying ever stops being
+the cheap half — because then there would be no reason to split the work at all.
+
+Two thirds of the pause is gone and the remaining third is still O(entries). Removing it needs a
+sorted map with structural sharing, so that a capture is a single reference assignment. That is not
+built, and the number above is what it costs not to have built it.
+
+An **incoming** snapshot is a different matter: it is written on the event loop, before the response
+that promises it is durable goes out. That is the one place the loop deliberately blocks on I/O, and
+it is bounded by the size of the snapshot.
 
 ## Overflow policies
 

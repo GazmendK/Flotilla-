@@ -68,3 +68,4 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0023](0023-wire-types-stay-at-the-edge.md) | Wire types stay at the edge | Accepted |
 | [0024](0024-client-library-and-error-model.md) | A client that retries safely and admits what it does not know | Accepted |
 | [0025](0025-whole-snapshots-in-the-core.md) | Whole snapshots in the core, chunking at the edge | Accepted |
+| [0026](0026-snapshots-off-the-apply-loop.md) | Snapshots are taken off the apply loop, compaction is asked for on the event loop | Accepted |

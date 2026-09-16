@@ -11,6 +11,7 @@ import dev.flotilla.core.Ready;
 import dev.flotilla.core.SoftState;
 import dev.flotilla.core.port.StableStore;
 import dev.flotilla.storage.DurableLogStore;
+import dev.flotilla.storage.WritableSnapshotStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -24,6 +25,7 @@ final class RaftEngine implements Runnable {
     private final RaftNode raft;
     private final DurableLogStore log;
     private final StableStore stable;
+    private final WritableSnapshotStore snapshots;
     private final MessageSink sink;
     private final EventQueue events;
     private final ApplyLoop apply;
@@ -39,6 +41,7 @@ final class RaftEngine implements Runnable {
     private final AtomicLong persistedEntries = new AtomicLong();
     private final AtomicLong batches = new AtomicLong();
     private final AtomicInteger largestBatch = new AtomicInteger();
+    private final AtomicLong compactions = new AtomicLong();
 
     @Nullable
     private volatile RuntimeException failure;
@@ -47,6 +50,7 @@ final class RaftEngine implements Runnable {
             RaftNode raft,
             DurableLogStore log,
             StableStore stable,
+            WritableSnapshotStore snapshots,
             MessageSink sink,
             EventQueue events,
             ApplyLoop apply,
@@ -55,6 +59,7 @@ final class RaftEngine implements Runnable {
         this.raft = Objects.requireNonNull(raft, "raft");
         this.log = Objects.requireNonNull(log, "log");
         this.stable = Objects.requireNonNull(stable, "stable");
+        this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
         this.sink = Objects.requireNonNull(sink, "sink");
         this.events = Objects.requireNonNull(events, "events");
         this.apply = Objects.requireNonNull(apply, "apply");
@@ -140,6 +145,10 @@ final class RaftEngine implements Runnable {
         return largestBatch.get();
     }
 
+    long compactions() {
+        return compactions.get();
+    }
+
     Optional<RuntimeException> failure() {
         return Optional.ofNullable(failure);
     }
@@ -150,6 +159,14 @@ final class RaftEngine implements Runnable {
             case NodeEvent.Inbound inbound -> raft.step(inbound.message());
             case NodeEvent.Proposal proposal -> propose(proposal);
             case NodeEvent.Shutdown ignored -> running = false;
+            case NodeEvent.Compact compact -> compact(compact.throughIndex());
+        }
+    }
+
+    private void compact(long throughIndex) {
+        if (throughIndex >= raft.firstLogIndex()) {
+            raft.compactLog(throughIndex);
+            compactions.incrementAndGet();
         }
     }
 
@@ -176,6 +193,7 @@ final class RaftEngine implements Runnable {
         }
         if (ready.requiresSync()) {
             ready.hardState().ifPresent(stable::persist);
+            ready.snapshot().ifPresent(snapshots::save);
             log.sync();
             syncs.incrementAndGet();
             persistedEntries.addAndGet(ready.entriesToPersist().size());
@@ -188,7 +206,7 @@ final class RaftEngine implements Runnable {
         raft.advance();
         publishedTerm = raft.currentTerm();
         publishedCommitIndex = raft.commitIndex();
-        apply.submit(committed);
+        apply.submit(ready.snapshotToInstall(), committed);
     }
 
     private void publishSoftState(SoftState state) {

@@ -14,6 +14,11 @@ public interface StateMachine {
 
     Bytes snapshot();
 
+    default StateCapture capture() {
+        Bytes taken = snapshot();
+        return () -> taken;
+    }
+
     void restore(Bytes snapshot);
 
     long lastAppliedIndex();

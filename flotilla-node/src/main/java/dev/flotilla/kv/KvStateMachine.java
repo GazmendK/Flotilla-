@@ -69,6 +69,14 @@ public final class KvStateMachine implements StateMachine {
     }
 
     @Override
+    public StateCapture capture() {
+        NavigableMap<Bytes, Bytes> frozenData = new TreeMap<>(data);
+        NavigableMap<Long, Session> frozenSessions = new TreeMap<>(sessions.all());
+        long index = lastAppliedIndex;
+        return () -> KvSnapshotCodec.encode(index, frozenData, frozenSessions);
+    }
+
+    @Override
     public void restore(Bytes snapshot) {
         KvSnapshotCodec.Snapshot restored = KvSnapshotCodec.decode(snapshot);
         data.clear();

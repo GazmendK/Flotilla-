@@ -5,7 +5,6 @@
 package dev.flotilla.storage;
 
 import dev.flotilla.core.Snapshot;
-import dev.flotilla.core.port.SnapshotStore;
 import dev.flotilla.storage.io.FileHandle;
 import dev.flotilla.storage.io.FileIo;
 import java.nio.file.Path;
@@ -15,7 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
-public final class FileSnapshotStore implements SnapshotStore {
+public final class FileSnapshotStore implements WritableSnapshotStore {
 
     public static final String SUFFIX = ".snap";
     public static final String TEMP_SUFFIX = ".snap.tmp";
@@ -53,11 +52,12 @@ public final class FileSnapshotStore implements SnapshotStore {
     }
 
     @Override
-    public Optional<Snapshot> latest() {
+    public synchronized Optional<Snapshot> latest() {
         return Optional.ofNullable(latest);
     }
 
-    public void save(Snapshot snapshot) {
+    @Override
+    public synchronized void save(Snapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
         if (latest != null && snapshot.lastIncludedIndex() < latest.lastIncludedIndex()) {
             throw new IllegalArgumentException("Cannot replace the snapshot through index " + latest.lastIncludedIndex()

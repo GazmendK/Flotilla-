@@ -43,6 +43,10 @@ public final class EventQueue {
         return queue.offer(event);
     }
 
+    public boolean offerCompact(NodeEvent event) {
+        return queue.offer(event);
+    }
+
     public int drainTo(Collection<NodeEvent> target, int max) {
         return queue.drainTo(target, max);
     }

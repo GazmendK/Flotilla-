@@ -12,8 +12,8 @@ import dev.flotilla.core.RaftConfig;
 import dev.flotilla.core.RaftNode;
 import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.core.port.RandomSource;
-import dev.flotilla.core.port.SnapshotStore;
 import dev.flotilla.kv.StateMachine;
+import dev.flotilla.storage.FileSnapshotStore;
 import dev.flotilla.storage.FileStableStore;
 import dev.flotilla.storage.SegmentedLogStore;
 import dev.flotilla.storage.StorageConfig;
@@ -46,6 +46,7 @@ public final class RaftServer implements AutoCloseable {
     private final ScheduledFuture<?> tickerTask;
     private final SegmentedLogStore log;
     private final FileStableStore stable;
+    private final SnapshotManager snapshots;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     private RaftServer(
@@ -60,7 +61,8 @@ public final class RaftServer implements AutoCloseable {
             ScheduledExecutorService ticker,
             ScheduledFuture<?> tickerTask,
             SegmentedLogStore log,
-            FileStableStore stable) {
+            FileStableStore stable,
+            SnapshotManager snapshots) {
         this.id = id;
         this.config = config;
         this.events = events;
@@ -73,6 +75,7 @@ public final class RaftServer implements AutoCloseable {
         this.tickerTask = tickerTask;
         this.log = log;
         this.stable = stable;
+        this.snapshots = snapshots;
     }
 
     public static RaftServer start(
@@ -95,17 +98,22 @@ public final class RaftServer implements AutoCloseable {
         HardState persisted = stable.load().orElse(HardState.INITIAL);
 
         NodeId id = raftConfig.nodeId();
+        EventQueue events = new EventQueue(serverConfig.eventQueueCapacity());
+        FileSnapshotStore snapshotFiles = FileSnapshotStore.open(directory, serverConfig.snapshotsRetained());
+        SnapshotManager snapshots = new SnapshotManager(
+                stateMachine, snapshotFiles, cluster, events, serverConfig.snapshotPolicy(), id.value());
+
         long seed = System.nanoTime() ^ ((long) id.value().hashCode() << 32);
-        RaftNode raft =
-                new RaftNode(raftConfig, cluster, log, SnapshotStore.none(), RandomSource.seeded(seed), persisted);
+        RaftNode raft = new RaftNode(raftConfig, cluster, log, snapshots, RandomSource.seeded(seed), persisted);
 
         ProposalRegistry proposals = new ProposalRegistry();
         ApplyLoop apply = new ApplyLoop(stateMachine, proposals, serverConfig.applyQueueCapacity());
+        snapshots.latest().ifPresent(apply::restoreFrom);
         apply.replayThrough(log, persisted.commitIndex());
+        apply.onApplied(snapshots::afterApply);
 
-        EventQueue events = new EventQueue(serverConfig.eventQueueCapacity());
-        RaftEngine engine =
-                new RaftEngine(raft, log, stable, sink, events, apply, proposals, serverConfig.maxBatchSize());
+        RaftEngine engine = new RaftEngine(
+                raft, log, stable, snapshots, sink, events, apply, proposals, serverConfig.maxBatchSize());
 
         Thread applyThread = new Thread(apply, "flotilla-" + id + "-apply");
         applyThread.start();
@@ -133,7 +141,8 @@ public final class RaftServer implements AutoCloseable {
                 ticker,
                 tickerTask,
                 log,
-                stable);
+                stable,
+                snapshots);
     }
 
     public NodeId id() {
@@ -182,6 +191,30 @@ public final class RaftServer implements AutoCloseable {
 
     public int largestBatch() {
         return engine.largestBatch();
+    }
+
+    public long snapshotsTaken() {
+        return snapshots.snapshotsTaken();
+    }
+
+    public long snapshotRestores() {
+        return apply.restores();
+    }
+
+    public long logCompactions() {
+        return engine.compactions();
+    }
+
+    public long firstLogIndex() {
+        return log.firstIndex();
+    }
+
+    public Duration longestSnapshotApplyPause() {
+        return snapshots.longestApplyPause();
+    }
+
+    public Duration totalSnapshotApplyPause() {
+        return snapshots.totalApplyPause();
     }
 
     public EventQueue events() {
@@ -245,6 +278,7 @@ public final class RaftServer implements AutoCloseable {
         forceStop(applyThread);
         proposals.failAll(null);
         RaftEngine.failQueuedProposals(events);
+        snapshots.close();
         stable.close();
         log.close();
     }

@@ -17,4 +17,6 @@ public sealed interface NodeEvent {
     record Proposal(Bytes command, CompletableFuture<Applied> result) implements NodeEvent {}
 
     record Shutdown() implements NodeEvent {}
+
+    record Compact(long throughIndex) implements NodeEvent {}
 }
