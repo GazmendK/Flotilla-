@@ -12,6 +12,16 @@ not stable before 1.0.0.
 
 ### Added
 
+- Reads that do not go through the log. A new `Query` RPC takes a consistency level per request:
+  `LINEARIZABLE` (the default) confirms leadership with a majority and waits for the answering node
+  to apply that far, `LEASE` answers from a leader lease when leases are enabled, and `STALE` answers
+  from whatever the receiving node has applied. Followers answer linearizable reads too, after asking
+  the leader for the read index. `FlotillaClient.get` and `scan` use the linearizable path, and a
+  write sent as a query is refused before it reaches Raft.
+- `RealClusterLinearizabilityIT`: three real nodes, six concurrent clients, the leader killed twice,
+  and every operation checked for linearizability. Answering linearizable reads from local state
+  fails it — but only after two of the clients were made to read from a follower. Before that, every
+  read went to the leader, whose state is almost never stale, and the test passed with the bug in.
 - Linearizability checked under faults. Simulated clients write through the leader and read through
   ReadIndex, lease reads, or straight from a replica, while nodes crash, partitions come and go and
   snapshots are installed; every history goes through the checker. ReadIndex and lease reads pass on

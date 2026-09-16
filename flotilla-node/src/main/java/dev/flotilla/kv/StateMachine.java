@@ -12,6 +12,14 @@ public interface StateMachine {
 
     default void validate(Bytes command) {}
 
+    default Bytes query(Bytes query) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " answers no queries outside the log");
+    }
+
+    default void validateQuery(Bytes query) {
+        throw new IllegalArgumentException(getClass().getSimpleName() + " answers no queries outside the log");
+    }
+
     Bytes snapshot();
 
     default StateCapture capture() {

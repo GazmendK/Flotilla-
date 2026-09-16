@@ -13,6 +13,7 @@ import dev.flotilla.kv.KvResponse;
 import dev.flotilla.transport.CallFailure;
 import dev.flotilla.transport.ClientEndpoint;
 import dev.flotilla.transport.Executed;
+import dev.flotilla.transport.ReadConsistency;
 import dev.flotilla.transport.grpc.GrpcClientEndpoint;
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -74,7 +75,11 @@ public final class FlotillaClient implements AutoCloseable {
     }
 
     public Optional<Bytes> get(Bytes key) {
-        return value(execute(new Command.Get(key)));
+        return get(key, ReadConsistency.LINEARIZABLE);
+    }
+
+    public Optional<Bytes> get(Bytes key, ReadConsistency consistency) {
+        return value(query(new Command.Get(key), consistency));
     }
 
     public Optional<Bytes> put(Bytes key, Bytes value) {
@@ -94,7 +99,11 @@ public final class FlotillaClient implements AutoCloseable {
     }
 
     public List<KeyValue> scan(Bytes fromInclusive, Bytes toExclusive, int limit) {
-        KvResponse response = execute(new Command.Scan(fromInclusive, toExclusive, limit));
+        return scan(fromInclusive, toExclusive, limit, ReadConsistency.LINEARIZABLE);
+    }
+
+    public List<KeyValue> scan(Bytes fromInclusive, Bytes toExclusive, int limit, ReadConsistency consistency) {
+        KvResponse response = query(new Command.Scan(fromInclusive, toExclusive, limit), consistency);
         if (response instanceof KvResponse.Entries entries) {
             return entries.entries();
         }
@@ -152,6 +161,35 @@ public final class FlotillaClient implements AutoCloseable {
         throw new IndeterminateResultException(
                 "Gave up after " + config.maxAttempts() + " attempts, so " + command
                         + " may or may not have taken effect",
+                last);
+    }
+
+    public synchronized KvResponse query(Command command, ReadConsistency consistency) {
+        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(consistency, "consistency");
+        long operation = history.invoke(process, command);
+        Bytes encoded = CommandCodec.encode(command);
+        @Nullable CallFailure last = null;
+        for (int attempt = 0; attempt < config.maxAttempts(); attempt++) {
+            try {
+                Executed answered = endpoint.query(target, encoded, consistency, config.attemptDeadline())
+                        .join();
+                KvResponse response = CommandCodec.decodeResponse(answered.result());
+                history.ok(operation, process, command, response);
+                return response;
+            } catch (CompletionException | CancellationException failed) {
+                CallFailure failure = CallFailure.from(failed);
+                if (failure.kind() == CallFailure.Kind.INVALID) {
+                    history.fail(operation, process, command, null);
+                    throw failure;
+                }
+                last = failure;
+                recover(failure, attempt);
+            }
+        }
+        history.fail(operation, process, command, null);
+        throw new FlotillaClientException(
+                "Gave up reading after " + config.maxAttempts() + " attempts; a read has no effect, so nothing changed",
                 last);
     }
 

@@ -51,6 +51,24 @@ public final class KvStateMachine implements StateMachine {
         CommandCodec.decodeRequest(Objects.requireNonNull(command, "command"));
     }
 
+    @Override
+    public Bytes query(Bytes query) {
+        return CommandCodec.encode(execute(readOnly(query)));
+    }
+
+    @Override
+    public void validateQuery(Bytes query) {
+        readOnly(Objects.requireNonNull(query, "query"));
+    }
+
+    private static Command readOnly(Bytes query) {
+        Command command = CommandCodec.decodeCommand(query);
+        if (!(command instanceof Command.Get || command instanceof Command.Scan)) {
+            throw new MalformedCommandException("A query must not change state, but " + command + " would");
+        }
+        return command;
+    }
+
     public KvResponse execute(Command command) {
         Objects.requireNonNull(command, "command");
         return switch (command) {

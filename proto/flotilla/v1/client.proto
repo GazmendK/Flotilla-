@@ -8,6 +8,7 @@ option java_package = "dev.flotilla.wire.v1";
 
 service ClientService {
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Query(QueryRequest) returns (QueryResponse);
 }
 
 message ExecuteRequest {
@@ -16,5 +17,26 @@ message ExecuteRequest {
 
 message ExecuteResponse {
   int64 index = 1;
+  bytes result = 2;
+}
+
+enum ReadConsistency {
+  READ_CONSISTENCY_UNSPECIFIED = 0;
+  // Confirmed with a majority before answering. The default.
+  READ_CONSISTENCY_LINEARIZABLE = 1;
+  // Answered from a leader lease; safe only under a bounded clock drift.
+  READ_CONSISTENCY_LEASE = 2;
+  // Answered from whatever the receiving node has applied. Not linearizable.
+  READ_CONSISTENCY_STALE = 3;
+}
+
+message QueryRequest {
+  bytes query = 1;
+  ReadConsistency consistency = 2;
+}
+
+message QueryResponse {
+  // The log index the answer reflects, at least.
+  int64 read_index = 1;
   bytes result = 2;
 }

@@ -4,18 +4,26 @@
  */
 package dev.flotilla.server;
 
+import dev.flotilla.core.Bytes;
 import dev.flotilla.core.LogEntry;
+import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftNode;
 import dev.flotilla.core.RaftRole;
+import dev.flotilla.core.ReadState;
 import dev.flotilla.core.Ready;
 import dev.flotilla.core.SoftState;
 import dev.flotilla.core.port.StableStore;
 import dev.flotilla.storage.DurableLogStore;
 import dev.flotilla.storage.WritableSnapshotStore;
+import dev.flotilla.transport.ReadConsistency;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.jspecify.annotations.Nullable;
@@ -32,6 +40,13 @@ final class RaftEngine implements Runnable {
     private final ProposalRegistry proposals;
     private final int maxBatchSize;
     private final List<NodeEvent> batch = new ArrayList<>();
+    private final Map<Bytes, PendingRead> pendingReads = new HashMap<>();
+    private final int readTimeoutTicks;
+
+    private long ticks;
+    private long readSequence;
+
+    private record PendingRead(Bytes query, CompletableFuture<Applied> result, long registeredAtTick) {}
 
     private volatile boolean running = true;
     private volatile boolean leader;
@@ -55,7 +70,8 @@ final class RaftEngine implements Runnable {
             EventQueue events,
             ApplyLoop apply,
             ProposalRegistry proposals,
-            int maxBatchSize) {
+            int maxBatchSize,
+            int readTimeoutTicks) {
         this.raft = Objects.requireNonNull(raft, "raft");
         this.log = Objects.requireNonNull(log, "log");
         this.stable = Objects.requireNonNull(stable, "stable");
@@ -65,6 +81,7 @@ final class RaftEngine implements Runnable {
         this.apply = Objects.requireNonNull(apply, "apply");
         this.proposals = Objects.requireNonNull(proposals, "proposals");
         this.maxBatchSize = maxBatchSize;
+        this.readTimeoutTicks = readTimeoutTicks;
         this.publishedTerm = raft.currentTerm();
         this.publishedCommitIndex = raft.commitIndex();
     }
@@ -92,6 +109,7 @@ final class RaftEngine implements Runnable {
             leader = false;
             failPending(batch);
             failQueuedProposals(events);
+            abandonReads(null);
         }
     }
 
@@ -155,7 +173,12 @@ final class RaftEngine implements Runnable {
 
     private void handle(NodeEvent event) {
         switch (event) {
-            case NodeEvent.Tick ignored -> raft.tick();
+            case NodeEvent.Tick ignored -> {
+                ticks++;
+                raft.tick();
+                expireStaleReads();
+            }
+            case NodeEvent.Read read -> read(read);
             case NodeEvent.Inbound inbound -> raft.step(inbound.message());
             case NodeEvent.Proposal proposal -> propose(proposal);
             case NodeEvent.Shutdown ignored -> running = false;
@@ -207,6 +230,54 @@ final class RaftEngine implements Runnable {
         publishedTerm = raft.currentTerm();
         publishedCommitIndex = raft.commitIndex();
         apply.submit(ready.snapshotToInstall(), committed);
+        answerConfirmedReads(ready.readStates());
+        ready.softState().ifPresent(ignored -> abandonReads(raft.leader().orElse(null)));
+    }
+
+    private void read(NodeEvent.Read read) {
+        readSequence++;
+        Bytes requestId =
+                Bytes.wrap(ByteBuffer.allocate(Long.BYTES).putLong(readSequence).array());
+        boolean accepted =
+                read.consistency() == ReadConsistency.LEASE ? raft.leaseRead(requestId) : raft.readIndex(requestId);
+        if (!accepted) {
+            read.result()
+                    .completeExceptionally(new NotLeaderException(raft.leader().orElse(null)));
+            return;
+        }
+        pendingReads.put(requestId, new PendingRead(read.query(), read.result(), ticks));
+    }
+
+    private void answerConfirmedReads(List<ReadState> confirmed) {
+        for (ReadState readState : confirmed) {
+            PendingRead pending = pendingReads.remove(readState.requestId());
+            if (pending != null && !apply.offerQuery(readState.readIndex(), pending.query(), pending.result())) {
+                pending.result()
+                        .completeExceptionally(new BackpressureException(
+                                "the apply queue is full; the read was refused rather than buffered"));
+            }
+        }
+    }
+
+    private void abandonReads(@Nullable NodeId knownLeader) {
+        if (pendingReads.isEmpty()) {
+            return;
+        }
+        NotLeaderException moved = new NotLeaderException(knownLeader);
+        pendingReads.values().forEach(pending -> pending.result().completeExceptionally(moved));
+        pendingReads.clear();
+    }
+
+    private void expireStaleReads() {
+        pendingReads.values().removeIf(pending -> {
+            if (ticks - pending.registeredAtTick() < readTimeoutTicks) {
+                return false;
+            }
+            pending.result()
+                    .completeExceptionally(new ReadTimeoutException(
+                            "no leader confirmed this read within " + readTimeoutTicks + " ticks"));
+            return true;
+        });
     }
 
     private void publishSoftState(SoftState state) {

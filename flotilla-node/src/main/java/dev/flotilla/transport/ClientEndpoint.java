@@ -13,6 +13,9 @@ public interface ClientEndpoint extends AutoCloseable {
 
     CompletableFuture<Executed> execute(InetSocketAddress target, Bytes command, Duration deadline);
 
+    CompletableFuture<Executed> query(
+            InetSocketAddress target, Bytes query, ReadConsistency consistency, Duration deadline);
+
     @Override
     void close();
 }

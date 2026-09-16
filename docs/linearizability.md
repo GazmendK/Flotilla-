@@ -7,8 +7,8 @@ is, and it is what a client of a key-value store implicitly assumes: a read that
 write has been acknowledged sees that write.
 
 Saying a system is linearizable is cheap. This page describes how Flotilla checks it: a checker
-written for this project, run against histories recorded from the simulation, and itself tested
-against histories that are known to be wrong.
+written for this project, run against histories recorded from the simulation and from a real
+cluster, and itself tested against histories that are known to be wrong.
 
 ## What the checker reads
 
@@ -152,6 +152,24 @@ The last row is not caught anywhere but its unit test, and cannot be: the margin
 clock drift, and the simulation's clocks do not drift. Without drift a lease of exactly one election
 timeout is safe, so a test that passed there would prove nothing either way.
 
+## Running it against a real cluster
+
+`RealClusterLinearizabilityIT` starts three real nodes talking gRPC over loopback, with the storage
+layer fsyncing as it does in production. Four clients write, compare-and-swap and read on six keys;
+two more only read, and start at a follower so their reads are answered there. Two seconds in, the
+leader is killed; two seconds later it comes back, the new leader is killed in turn, and it comes back
+too. Every client records its operations through `HistoryRecorder`, and the whole history goes
+through the checker.
+
+One run completed 1,376 reads and 840 writes with three unknown outcomes, and the checker needed
+53 ms. The test refuses to pass on fewer than a hundred of each.
+
+Making the server answer linearizable reads from whatever the receiving node has applied fails the
+test on each of three runs. The first version of the test, without the two follower readers, passed
+with that change: clients that write are redirected to the leader and stay there, and a leader's own
+state is almost never stale. A check that only ever reads from the node most likely to be right is a
+check that cannot fail.
+
 ## Where this sits
 
 - **[Knossos](https://github.com/jepsen-io/knossos)** is Jepsen's original checker, in Clojure. The
@@ -159,6 +177,7 @@ timeout is safe, so a test that passed there would prove nothing either way.
 - **[Porcupine](https://github.com/anishathalye/porcupine)** is the Go checker this implementation's
   search loop is modelled on, including the linked-list walk and the cache.
 - **[Jepsen](https://jepsen.io)** is the harness that records histories from real clusters under
-  partitions and crashes. `HistoryRecorder` in the client records histories in the same vocabulary.
+  partitions and crashes. `RealClusterLinearizabilityIT` is a small version of the same idea, and
+  `HistoryRecorder` records its histories in the same vocabulary.
 - **Elle**, also from Jepsen, checks transactional isolation rather than linearizability, which is a
   different question this project does not need to ask.

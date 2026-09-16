@@ -10,9 +10,27 @@ replica applies the log in the same order. Once a write returns, every subsequen
 or something later — there is a single point in time between the call and the return at which it
 took effect.
 
-**Reads are linearizable, by going through the log.** A `Get` is an ordinary log entry today. That
-is correct and slow: a read costs a full round of consensus. `ReadIndex` and lease reads in Phase 11
-make it cheap without weakening the guarantee.
+**Reads are linearizable by default, without going through the log.** A read carries a consistency
+level, chosen per request:
+
+| Level | How it is answered | Guarantee |
+|---|---|---|
+| `LINEARIZABLE` (default) | ReadIndex: the leader confirms with a majority, after the read arrived, that it still leads; the answering node waits until it has applied that far | linearizable, under exactly the assumptions Raft already makes |
+| `LEASE` | the leader answers at once if a majority acknowledged it recently enough | linearizable **only if** no node's clock runs slower than another's by more than `clockDriftBoundTicks` over one election timeout; off unless `RaftConfig.leaseReads` is set |
+| `STALE` | whatever the receiving node has applied | none — a lagging follower answers with old data, and `ReadPathTest` shows it doing so |
+
+A linearizable read may be sent to a follower. The follower asks the leader for the read index,
+waits for its own state machine to catch up, and answers locally. That spreads the work of answering
+across replicas; every linearizable read still costs the leader one confirmation round. A read through the log is still possible by sending `Get` as a command,
+and costs what it always did.
+
+A new leader answers no linearizable read until it has committed an entry of its own term, because
+until then it does not know how far its predecessor committed. With leases on, a node that has just
+started refuses to vote for one election timeout, because a follower that crashed has forgotten the
+lease it granted. [ADR-0028](adr/0028-readindex-by-default-leases-by-choice.md) records the reasoning.
+
+These are not claims on trust. Histories recorded from the simulation and from a three-node cluster
+with its leader killed are checked for linearizability; see [linearizability.md](linearizability.md).
 
 **Execution is exactly-once per session.** A request carries `(clientId, sequence)`. The state
 machine remembers the last sequence and the last response per client, so a retry after a lost

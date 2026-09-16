@@ -12,6 +12,7 @@ import dev.flotilla.transport.CallFailure;
 import dev.flotilla.transport.CommandGateway;
 import dev.flotilla.transport.Executed;
 import dev.flotilla.transport.PeerDirectory;
+import dev.flotilla.transport.QueryGateway;
 import dev.flotilla.transport.TransportConfig;
 import dev.flotilla.transport.grpc.GrpcClientService;
 import dev.flotilla.transport.grpc.GrpcPeerService;
@@ -73,7 +74,7 @@ public final class FlotillaNode implements AutoCloseable {
         try {
             Server grpc = NettyServerBuilder.forAddress(bindAddress)
                     .addService(service)
-                    .addService(new GrpcClientService(gateway))
+                    .addService(new GrpcClientService(gateway, queries(server, stateMachine, peers)))
                     .maxInboundMessageSize(transportConfig.maxMessageBytes())
                     .permitKeepAliveTime(transportConfig.keepAliveTime().toNanos() / 2, TimeUnit.NANOSECONDS)
                     .permitKeepAliveWithoutCalls(true)
@@ -85,6 +86,20 @@ public final class FlotillaNode implements AutoCloseable {
             transport.close();
             throw new UncheckedIOException("Cannot listen on " + bindAddress, bindFailure);
         }
+    }
+
+    static QueryGateway queries(RaftServer server, StateMachine stateMachine, PeerDirectory peers) {
+        return (query, consistency) -> {
+            try {
+                stateMachine.validateQuery(query);
+            } catch (IllegalArgumentException invalid) {
+                return CompletableFuture.failedFuture(
+                        CallFailure.of(CallFailure.Kind.INVALID, String.valueOf(invalid.getMessage())));
+            }
+            return server.query(query, consistency)
+                    .thenApply(answered -> new Executed(answered.index(), answered.response()))
+                    .exceptionallyCompose(failure -> CompletableFuture.failedFuture(translate(failure, peers)));
+        };
     }
 
     static CommandGateway gateway(RaftServer server, StateMachine stateMachine, PeerDirectory peers) {

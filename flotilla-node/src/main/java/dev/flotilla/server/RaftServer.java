@@ -19,6 +19,7 @@ import dev.flotilla.storage.SegmentedLogStore;
 import dev.flotilla.storage.StorageConfig;
 import dev.flotilla.storage.StorageDirectory;
 import dev.flotilla.storage.io.RealFileIo;
+import dev.flotilla.transport.ReadConsistency;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
@@ -113,7 +114,16 @@ public final class RaftServer implements AutoCloseable {
         apply.onApplied(snapshots::afterApply);
 
         RaftEngine engine = new RaftEngine(
-                raft, log, stable, snapshots, sink, events, apply, proposals, serverConfig.maxBatchSize());
+                raft,
+                log,
+                stable,
+                snapshots,
+                sink,
+                events,
+                apply,
+                proposals,
+                serverConfig.maxBatchSize(),
+                raftConfig.electionTimeoutMaxTicks() * 3);
 
         Thread applyThread = new Thread(apply, "flotilla-" + id + "-apply");
         applyThread.start();
@@ -243,6 +253,24 @@ public final class RaftServer implements AutoCloseable {
         if (!events.offerProposal(new NodeEvent.Proposal(command, result))) {
             result.completeExceptionally(new BackpressureException("Event queue of " + id + " is full (capacity "
                     + config.eventQueueCapacity() + "); the proposal was rejected rather than buffered"));
+        }
+        return result;
+    }
+
+    public CompletableFuture<Applied> query(Bytes query, ReadConsistency consistency) {
+        Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(consistency, "consistency");
+        CompletableFuture<Applied> result = new CompletableFuture<>();
+        if (closed.get() || !engine.isRunning()) {
+            result.completeExceptionally(new IllegalStateException("Server " + id + " is not running"));
+            return result;
+        }
+        boolean queued = consistency == ReadConsistency.STALE
+                ? apply.offerQuery(0, query, result)
+                : events.offerRead(new NodeEvent.Read(query, consistency, result));
+        if (!queued) {
+            result.completeExceptionally(new BackpressureException(
+                    "Server " + id + " is too busy to take the read; it was refused rather than buffered"));
         }
         return result;
     }

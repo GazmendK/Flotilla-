@@ -58,11 +58,35 @@ This section is the point of the project. It will fill in as the phases land:
 | ☑ | Figure 7 and Figure 8 of the paper encoded as test cases | 4 |
 | ☑ | Fault injection proving the checkers actually detect known-bad behaviour | 5 |
 | ☑ | Crash-consistency verified by injecting a crash at every write, sync, delete and directory sync | 6 |
-| ☐ | A linearizability checker, run over real cluster histories | 11 |
+| ☑ | A linearizability checker of its own, checked against brute force, run over simulated and real cluster histories | 11 |
 | ☑ | Every safeguard tested with itself disabled, so it is known to fail without it | 3 |
 | ☑ | Determinism enforced as tests: the core cannot acquire I/O, threads, a clock or unseeded randomness | 2 |
 | ☑ | Static analysis as build failures: Error Prone, NullAway, `-Werror` | 1 |
 | ☑ | CI on Linux, macOS **and Windows** — file and fsync semantics differ, and storage bugs hide there | 1 |
+
+### What a violation looks like
+
+The checker is only worth something if it says no. This is what it printed when the server was made
+to answer linearizable reads from whatever a follower had applied, against three real nodes with the
+leader killed twice, abridged to the four operations that matter:
+
+```
+NOT LINEARIZABLE on key "key-0"
+
+  process  timeline                               operation
+  p2       [-----------------]               8    put key-0="p1-1" -> nil
+  p2                   [-------------]       9    cas key-0 "p1-1"->"p1-2" -> swapped
+  p5                     [-]                 X    get key-0 -> nil
+  p6                         [-]                  get key-0 -> "p1-1"
+
+The longest order consistent with the model places 9 of 3372 operations and leaves the state at "p1-2".
+The operation marked X, get key-0 -> nil by p5, cannot be placed after it.
+```
+
+`p5` read from a follower and saw nothing, after both writes had been acknowledged. With the real
+read path the same test is linearizable — in one run 1,376 reads and 840 writes, checked in 53 ms. How the
+checker works, and what it does and does not catch, is in
+[`docs/linearizability.md`](docs/linearizability.md).
 
 ## Architecture
 

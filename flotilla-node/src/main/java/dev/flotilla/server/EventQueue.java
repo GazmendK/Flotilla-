@@ -16,6 +16,7 @@ public final class EventQueue {
     private final BlockingQueue<NodeEvent> queue;
     private final AtomicLong rejectedProposals = new AtomicLong();
     private final AtomicLong droppedTicks = new AtomicLong();
+    private final AtomicLong rejectedReads = new AtomicLong();
 
     public EventQueue(int capacity) {
         this.queue = new ArrayBlockingQueue<>(capacity);
@@ -41,6 +42,18 @@ public final class EventQueue {
 
     public boolean offerInbound(NodeEvent event) {
         return queue.offer(event);
+    }
+
+    public boolean offerRead(NodeEvent event) {
+        if (queue.offer(event)) {
+            return true;
+        }
+        rejectedReads.incrementAndGet();
+        return false;
+    }
+
+    public long rejectedReads() {
+        return rejectedReads.get();
     }
 
     public boolean offerCompact(NodeEvent event) {

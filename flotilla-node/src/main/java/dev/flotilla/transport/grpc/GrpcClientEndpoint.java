@@ -10,9 +10,12 @@ import dev.flotilla.core.NodeId;
 import dev.flotilla.transport.CallFailure;
 import dev.flotilla.transport.ClientEndpoint;
 import dev.flotilla.transport.Executed;
+import dev.flotilla.transport.ReadConsistency;
 import dev.flotilla.wire.v1.ClientServiceGrpc;
 import dev.flotilla.wire.v1.ExecuteRequest;
 import dev.flotilla.wire.v1.ExecuteResponse;
+import dev.flotilla.wire.v1.QueryRequest;
+import dev.flotilla.wire.v1.QueryResponse;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
@@ -65,6 +68,46 @@ public final class GrpcClientEndpoint implements ClientEndpoint {
                             public void onCompleted() {}
                         });
         return result;
+    }
+
+    @Override
+    public CompletableFuture<Executed> query(
+            InetSocketAddress target, Bytes query, ReadConsistency consistency, Duration deadline) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(query, "query");
+        CompletableFuture<Executed> result = new CompletableFuture<>();
+        ClientServiceGrpc.newStub(channelTo(target))
+                .withDeadlineAfter(deadline.toNanos(), TimeUnit.NANOSECONDS)
+                .query(
+                        QueryRequest.newBuilder()
+                                .setQuery(UnsafeByteOperations.unsafeWrap(query.toByteArray()))
+                                .setConsistency(toWire(consistency))
+                                .build(),
+                        new StreamObserver<>() {
+                            @Override
+                            public void onNext(QueryResponse response) {
+                                result.complete(new Executed(
+                                        response.getReadIndex(),
+                                        Bytes.wrap(response.getResult().toByteArray())));
+                            }
+
+                            @Override
+                            public void onError(Throwable error) {
+                                result.completeExceptionally(toFailure(error));
+                            }
+
+                            @Override
+                            public void onCompleted() {}
+                        });
+        return result;
+    }
+
+    private static dev.flotilla.wire.v1.ReadConsistency toWire(ReadConsistency consistency) {
+        return switch (consistency) {
+            case LINEARIZABLE -> dev.flotilla.wire.v1.ReadConsistency.READ_CONSISTENCY_LINEARIZABLE;
+            case LEASE -> dev.flotilla.wire.v1.ReadConsistency.READ_CONSISTENCY_LEASE;
+            case STALE -> dev.flotilla.wire.v1.ReadConsistency.READ_CONSISTENCY_STALE;
+        };
     }
 
     @Override

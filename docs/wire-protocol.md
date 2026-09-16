@@ -7,6 +7,7 @@ Two gRPC services share one port on every node. Both are defined in `proto/floti
 |---|---|---|---|
 | `RaftPeerService` | `Deliver` | nodes | one Raft message per call |
 | `ClientService` | `Execute` | clients | one encoded state machine request per call |
+| `ClientService` | `Query` | clients | one read that does not go through the log |
 
 Every numeric field is `int64`. Java's `long` maps onto it exactly; `uint64` would force every
 mapping site to reason about the sign bit.
@@ -140,6 +141,24 @@ index the command was applied at and the state machine's encoded result.
 The node validates the command before proposing it and otherwise never looks inside. Deduplication
 happens in the state machine, keyed by the session the request carries, so a retried request with
 the same session and sequence is answered from the cache rather than run again.
+
+### Reads
+
+`Query` answers a read without writing to the log. `QueryRequest.query` holds an encoded command that
+must not change state — for the key-value store a `Get` or a `Scan`; anything else is refused with
+`INVALID_ARGUMENT` before it reaches Raft. `QueryRequest.consistency` chooses how the answer is
+obtained:
+
+| Consistency | Answered by | Meaning |
+|---|---|---|
+| `READ_CONSISTENCY_LINEARIZABLE`, or unspecified | any node, after the leader confirms a read index with a majority | linearizable |
+| `READ_CONSISTENCY_LEASE` | the leader, from a lease if one is held, otherwise as above | linearizable under a bounded clock drift |
+| `READ_CONSISTENCY_STALE` | any node, from what it has applied | not linearizable |
+
+`QueryResponse.read_index` is the log index the answer reflects, at least. A read that cannot be
+confirmed — the node knows no leader, loses leadership, or hears nothing back within three election
+timeouts — fails with `UNAVAILABLE` and can be retried anywhere: a read has no effect, so there is
+nothing to deduplicate.
 
 ### Errors
 

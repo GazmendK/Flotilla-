@@ -9,9 +9,13 @@ import dev.flotilla.core.Bytes;
 import dev.flotilla.transport.CallFailure;
 import dev.flotilla.transport.CommandGateway;
 import dev.flotilla.transport.Executed;
+import dev.flotilla.transport.QueryGateway;
+import dev.flotilla.transport.ReadConsistency;
 import dev.flotilla.wire.v1.ClientServiceGrpc;
 import dev.flotilla.wire.v1.ExecuteRequest;
 import dev.flotilla.wire.v1.ExecuteResponse;
+import dev.flotilla.wire.v1.QueryRequest;
+import dev.flotilla.wire.v1.QueryResponse;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -26,9 +30,38 @@ public final class GrpcClientService extends ClientServiceGrpc.ClientServiceImpl
             Metadata.Key.of("flotilla-leader-address", Metadata.ASCII_STRING_MARSHALLER);
 
     private final CommandGateway gateway;
+    private final QueryGateway queries;
 
     public GrpcClientService(CommandGateway gateway) {
+        this(gateway, QueryGateway.unsupported());
+    }
+
+    public GrpcClientService(CommandGateway gateway, QueryGateway queries) {
         this.gateway = Objects.requireNonNull(gateway, "gateway");
+        this.queries = Objects.requireNonNull(queries, "queries");
+    }
+
+    @Override
+    public void query(QueryRequest request, StreamObserver<QueryResponse> response) {
+        ReadConsistency consistency =
+                switch (request.getConsistency()) {
+                    case READ_CONSISTENCY_LEASE -> ReadConsistency.LEASE;
+                    case READ_CONSISTENCY_STALE -> ReadConsistency.STALE;
+                    case READ_CONSISTENCY_LINEARIZABLE, READ_CONSISTENCY_UNSPECIFIED, UNRECOGNIZED ->
+                        ReadConsistency.LINEARIZABLE;
+                };
+        Bytes query = Bytes.wrap(request.getQuery().toByteArray());
+        CompletableFuture<Executed> _ = queries.query(query, consistency).whenComplete((answered, failure) -> {
+            if (failure != null) {
+                response.onError(toStatus(CallFailure.from(failure)));
+                return;
+            }
+            response.onNext(QueryResponse.newBuilder()
+                    .setReadIndex(answered.index())
+                    .setResult(UnsafeByteOperations.unsafeWrap(answered.result().toByteArray()))
+                    .build());
+            response.onCompleted();
+        });
     }
 
     @Override

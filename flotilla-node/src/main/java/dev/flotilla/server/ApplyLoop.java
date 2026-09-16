@@ -10,11 +10,14 @@ import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.Snapshot;
 import dev.flotilla.core.port.LogStore;
 import dev.flotilla.kv.StateMachine;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.PriorityQueue;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.jspecify.annotations.Nullable;
@@ -36,7 +39,13 @@ final class ApplyLoop implements Runnable {
     @Nullable
     private volatile RuntimeException failure;
 
-    private record Work(@Nullable Snapshot snapshot, List<LogEntry> entries) {}
+    private sealed interface Work {}
+
+    private record Entries(@Nullable Snapshot snapshot, List<LogEntry> entries) implements Work {}
+
+    private record Query(long readIndex, Bytes query, CompletableFuture<Applied> result) implements Work {}
+
+    private final PriorityQueue<Query> parked = new PriorityQueue<>(Comparator.comparingLong(Query::readIndex));
 
     ApplyLoop(StateMachine stateMachine, ProposalRegistry proposals, int capacity) {
         this.stateMachine = Objects.requireNonNull(stateMachine, "stateMachine");
@@ -69,7 +78,15 @@ final class ApplyLoop implements Runnable {
             return;
         }
         backlog.addAndGet(committed.size());
-        pending.put(new Work(snapshot, committed));
+        pending.put(new Entries(snapshot, committed));
+    }
+
+    boolean offerQuery(long readIndex, Bytes query, CompletableFuture<Applied> result) {
+        return running && pending.offer(new Query(readIndex, query, result));
+    }
+
+    int parkedQueries() {
+        return parked.size();
     }
 
     @Override
@@ -87,6 +104,18 @@ final class ApplyLoop implements Runnable {
             failure = unexpected;
         } finally {
             running = false;
+            failUnansweredQueries();
+        }
+    }
+
+    private void failUnansweredQueries() {
+        IllegalStateException stopped = new IllegalStateException("the server stopped before this read was answered");
+        parked.forEach(query -> query.result().completeExceptionally(stopped));
+        parked.clear();
+        for (Work work : pending) {
+            if (work instanceof Query query) {
+                query.result().completeExceptionally(stopped);
+            }
         }
     }
 
@@ -111,11 +140,37 @@ final class ApplyLoop implements Runnable {
     }
 
     private void applyWork(Work work) {
-        Snapshot snapshot = work.snapshot();
-        if (snapshot != null) {
-            restoreFrom(snapshot);
+        switch (work) {
+            case Entries entries -> {
+                Snapshot snapshot = entries.snapshot();
+                if (snapshot != null) {
+                    restoreFrom(snapshot);
+                }
+                applyBatch(entries.entries());
+                answerParkedQueries();
+            }
+            case Query query -> {
+                if (query.readIndex() <= appliedIndex) {
+                    answer(query);
+                } else {
+                    parked.add(query);
+                }
+            }
         }
-        applyBatch(work.entries());
+    }
+
+    private void answerParkedQueries() {
+        while (!parked.isEmpty() && parked.peek().readIndex() <= appliedIndex) {
+            answer(parked.poll());
+        }
+    }
+
+    private void answer(Query query) {
+        try {
+            query.result().complete(new Applied(appliedIndex, stateMachine.query(query.query())));
+        } catch (RuntimeException rejected) {
+            query.result().completeExceptionally(rejected);
+        }
     }
 
     private void applyBatch(List<LogEntry> batch) {

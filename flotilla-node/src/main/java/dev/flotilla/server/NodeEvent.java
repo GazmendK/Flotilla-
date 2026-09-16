@@ -6,6 +6,7 @@ package dev.flotilla.server;
 
 import dev.flotilla.core.Bytes;
 import dev.flotilla.core.message.RaftMessage;
+import dev.flotilla.transport.ReadConsistency;
 import java.util.concurrent.CompletableFuture;
 
 public sealed interface NodeEvent {
@@ -19,4 +20,6 @@ public sealed interface NodeEvent {
     record Shutdown() implements NodeEvent {}
 
     record Compact(long throughIndex) implements NodeEvent {}
+
+    record Read(Bytes query, ReadConsistency consistency, CompletableFuture<Applied> result) implements NodeEvent {}
 }

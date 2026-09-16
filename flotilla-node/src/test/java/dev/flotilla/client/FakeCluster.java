@@ -13,6 +13,7 @@ import dev.flotilla.kv.KvStateMachine;
 import dev.flotilla.transport.CallFailure;
 import dev.flotilla.transport.ClientEndpoint;
 import dev.flotilla.transport.Executed;
+import dev.flotilla.transport.ReadConsistency;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -50,6 +51,21 @@ final class FakeCluster implements ClientEndpoint {
         for (int i = 0; i < entries; i++) {
             store.apply(++index, CommandCodec.encode(KvRequest.anonymous(Command.put("filler", "x"))));
         }
+    }
+
+    @Override
+    public CompletableFuture<Executed> query(
+            InetSocketAddress target, Bytes query, ReadConsistency consistency, Duration deadline) {
+        targets.add(target);
+        if (unavailableNext > 0) {
+            unavailableNext--;
+            return CompletableFuture.failedFuture(CallFailure.of(CallFailure.Kind.UNAVAILABLE, "unreachable"));
+        }
+        if (!target.equals(leader) && consistency != ReadConsistency.STALE) {
+            return CompletableFuture.failedFuture(
+                    leaderKnown ? CallFailure.notLeader(LEADER_ID, leader) : CallFailure.notLeader(null, null));
+        }
+        return CompletableFuture.completedFuture(new Executed(index, store.query(query)));
     }
 
     @Override
