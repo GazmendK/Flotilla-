@@ -4,16 +4,20 @@
  */
 package dev.flotilla.sim;
 
+import dev.flotilla.core.Bytes;
 import dev.flotilla.core.ClusterConfig;
 import dev.flotilla.core.InMemorySnapshotStore;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftConfig;
 import dev.flotilla.core.RaftNode;
+import dev.flotilla.core.ReadState;
 import dev.flotilla.core.Snapshot;
 import dev.flotilla.core.port.RandomSource;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -27,6 +31,7 @@ public final class SimNode {
     private final SimStateMachine stateMachine = new SimStateMachine();
     private final long baseSeed;
     private final List<LogEntry> appliedHistory = new ArrayList<>();
+    private final Map<Bytes, Long> confirmedReads = new HashMap<>();
 
     private RaftNode raft;
     private boolean running = true;
@@ -93,11 +98,8 @@ public final class SimNode {
         restarts++;
         raft = newRaftInstance();
         appliedThisStep = List.of();
-        stateMachine.recover(
-                snapshots.latest().map(Snapshot::lastIncludedIndex),
-                snapshots.latest().map(snapshot -> SimStateMachine.digestOf(snapshot.data())),
-                log,
-                stable.recovered().commitIndex());
+        stateMachine.recover(snapshots.latest(), log, stable.recovered().commitIndex());
+        confirmedReads.clear();
     }
 
     public void restart() {
@@ -120,7 +122,7 @@ public final class SimNode {
     }
 
     public void restoreFrom(Snapshot snapshot) {
-        stateMachine.restore(snapshot.lastIncludedIndex(), SimStateMachine.digestOf(snapshot.data()));
+        stateMachine.restore(snapshot.lastIncludedIndex(), snapshot.data());
         snapshots.save(snapshot);
         restoredFromSnapshotAt = snapshot.lastIncludedIndex();
     }
@@ -134,6 +136,16 @@ public final class SimNode {
         snapshots.save(snapshot);
         raft.compactLog(through);
         return Optional.of(snapshot);
+    }
+
+    public void recordReadStates(List<ReadState> readStates) {
+        for (ReadState readState : readStates) {
+            confirmedReads.put(readState.requestId(), readState.readIndex());
+        }
+    }
+
+    public Optional<Long> takeReadIndex(Bytes requestId) {
+        return Optional.ofNullable(confirmedReads.remove(requestId));
     }
 
     public List<LogEntry> appliedThisStep() {

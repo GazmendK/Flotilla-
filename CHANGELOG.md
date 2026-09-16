@@ -12,6 +12,14 @@ not stable before 1.0.0.
 
 ### Added
 
+- Linearizability checked under faults. Simulated clients write through the leader and read through
+  ReadIndex, lease reads, or straight from a replica, while nodes crash, partitions come and go and
+  snapshots are installed; every history goes through the checker. ReadIndex and lease reads pass on
+  every seed. Reading straight from a replica is caught.
+- A targeted scenario for the textbook bug: a leader cut off in a minority, still believing it leads,
+  receives a read after the majority has elected a new leader and accepted a write. Answering without
+  confirming leadership is caught there — and only there, because CheckQuorum closes that window
+  within two election timeouts and random partitions almost never land in it.
 - ReadIndex in the consensus core: a leader answers a read without writing to the log once a
   majority has acknowledged a heartbeat round sent *after* the read arrived, and only after it has
   committed an entry of its own term. Reads that arrive while a round is in flight share the next one,

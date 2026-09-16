@@ -7,8 +7,8 @@ is, and it is what a client of a key-value store implicitly assumes: a read that
 write has been acknowledged sees that write.
 
 Saying a system is linearizable is cheap. This page describes how Flotilla checks it: a checker
-written for this project to run against histories recorded from the simulation and from a real
-cluster, and itself tested against histories that are known to be wrong.
+written for this project, run against histories recorded from the simulation, and itself tested
+against histories that are known to be wrong.
 
 ## What the checker reads
 
@@ -99,6 +99,58 @@ comparison, and removing memoisation makes the large histories run out of time.
 The checker lives in `dev.flotilla.linearizability` and depends on nothing but the JDK, which an
 architecture test enforces. A checker that shared code with the system it checks could share its
 bugs, and would then agree with them.
+
+## Running it against the simulation
+
+The simulation drives clients against a five-node cluster while it crashes nodes, partitions the
+network, drops and duplicates messages and takes snapshots. Each client picks a key, writes through a
+leader or reads through any node, and records what it saw. Every value written is unique, so a stale
+read cannot hide behind a coincidentally equal one. When a client stops waiting — its node crashed,
+installed a snapshot over the entry, or took too long — the operation is recorded as unknown, which
+is what a real client would have to report.
+
+Events inside one simulation step are timestamped in the order the clients experienced them. With a
+single timestamp per step, an acknowledgement and a read issued right after it look simultaneous, and
+the checker is right to let the read go first. That hid the first stale read this setup produced.
+
+| Read path | Result |
+|---|---|
+| ReadIndex, 40 seeds | linearizable, with at least 20 reads and 20 writes completing per run so a pass cannot come from doing nothing |
+| Lease reads, 40 seeds | linearizable — in a simulation whose clocks never drift |
+| Reading straight from whichever replica is asked | caught on at least eight seeds in ten, which the test requires |
+
+### What it catches, and what it does not
+
+Every safeguard in the read path was switched off in turn and run against both the random workload
+and a targeted scenario — the leader cut off in a minority while the majority elects a new one and
+accepts a write, and a read then sent to the old leader:
+
+| Safeguard removed | Random workload | Targeted scenario | Unit test |
+|---|---|---|---|
+| Waiting for the state machine to reach the read index | caught, on most seeds | — | — |
+| Confirming leadership before answering | **not caught** | caught | `ReadIndexTest` |
+| A lease four election timeouts long | not caught | caught | — |
+| Waiting for the new leader's no-op to commit | not caught | not caught | `ReadIndexTest` |
+| Refusing votes right after a restart when leases are on | not caught | not caught | `ReadIndexTest` |
+| The clock-drift margin on the lease | not caught | not caught | `ReadIndexTest` |
+
+The second row is the one worth dwelling on. A read answered without confirming leadership is the
+textbook linearizability bug, and a random fault schedule almost never exposes it here, because
+CheckQuorum makes a leader that loses its majority step down within two election timeouts. The window
+in which two leaders both believe in themselves is a few ticks wide, and random partitions rarely
+land in it. The targeted scenario lands in it on purpose and produces exactly this:
+
+```
+NOT LINEARIZABLE on key "deposed"
+
+  process  timeline       operation
+  p1       [-]       1    put deposed="fresh" -> nil
+  p2           [-]   X    get deposed -> nil
+```
+
+The last row is not caught anywhere but its unit test, and cannot be: the margin protects against
+clock drift, and the simulation's clocks do not drift. Without drift a lease of exactly one election
+timeout is safe, so a test that passed there would prove nothing either way.
 
 ## Where this sits
 

@@ -52,11 +52,17 @@ public final class Simulation implements WorldView {
     private long snapshotInstalls;
     private boolean faultsEnabled = true;
     private boolean proposalsEnabled = true;
+    private final SimWorkload workload;
 
     public Simulation(long seed, SimConfig config) {
+        this(seed, config, WorkloadConfig.none());
+    }
+
+    public Simulation(long seed, SimConfig config, WorkloadConfig workloadConfig) {
         this.seed = seed;
         this.config = config;
         this.random = new DeterministicRandom(seed);
+        this.workload = new SimWorkload(workloadConfig, seed);
 
         List<NodeId> ids = IntStream.rangeClosed(1, config.voters())
                 .mapToObj(index -> NodeId.of("n" + index))
@@ -67,6 +73,7 @@ public final class Simulation implements WorldView {
             nodeSeed = nodeSeed * 31 + 17;
             RaftConfig raftConfig = RaftConfig.builder(id)
                     .maxEntriesPerAppend(config.maxEntriesPerAppend())
+                    .leaseReads(workloadConfig.readMode() == WorkloadConfig.ReadMode.LEASE)
                     .build();
             nodes.put(id, new SimNode(raftConfig, cluster, nodeSeed));
         }
@@ -89,6 +96,10 @@ public final class Simulation implements WorldView {
         return seed;
     }
 
+    public SimWorkload workload() {
+        return workload;
+    }
+
     public EventTrace trace() {
         return trace;
     }
@@ -108,7 +119,9 @@ public final class Simulation implements WorldView {
     public void settle(int ticks) {
         faultsEnabled = false;
         proposalsEnabled = false;
+        workload.stopStarting();
         run(ticks);
+        workload.resumeStarting();
         proposalsEnabled = true;
         faultsEnabled = true;
     }
@@ -129,6 +142,7 @@ public final class Simulation implements WorldView {
 
         maybePropose();
         maybeSnapshot();
+        workload.step(nodes.values(), clock.now(), clock.tickNumber(), this::drain);
         if (faultsEnabled) {
             injectFaults();
         }
@@ -175,6 +189,7 @@ public final class Simulation implements WorldView {
                         trace.record(clock.now(), node.id() + " -> " + soft.role() + " term=" + raft.currentTerm()));
 
         node.recordApplied(ready.committedEntriesToApply());
+        node.recordReadStates(ready.readStates());
         ready.messagesToSend().forEach(this::schedule);
         raft.advance();
     }
@@ -330,6 +345,26 @@ public final class Simulation implements WorldView {
             return false;
         }
         boolean accepted = node.raft().propose(Bytes.ofUtf8(value));
+        drain(node);
+        return accepted;
+    }
+
+    public boolean leaseRead(NodeId id, Bytes requestId) {
+        SimNode node = node(id);
+        if (!node.isRunning()) {
+            return false;
+        }
+        boolean accepted = node.raft().leaseRead(requestId);
+        drain(node);
+        return accepted;
+    }
+
+    public boolean readIndex(NodeId id, Bytes requestId) {
+        SimNode node = node(id);
+        if (!node.isRunning()) {
+            return false;
+        }
+        boolean accepted = node.raft().readIndex(requestId);
         drain(node);
         return accepted;
     }

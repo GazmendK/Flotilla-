@@ -33,6 +33,7 @@ mechanism nobody can trust.
 | Invariant checkers | `InvariantTest` builds a violating world for each and asserts it fires, including logs that start above index 1 |
 | Crash recovery | `CrashConsistencyTest` crashes at every durability operation, with directory entries durable only after a directory sync; it found a segment-creation bug and a truncation bug, each of which bricked recovery |
 | Snapshot rules in the core | Each of the eight rules in `SnapshotProtocolTest` is switched off in turn; each makes exactly one test fail |
+| Read path | `DeposedLeaderReadTest` catches a read answered without confirming leadership; the random workload does not, and `docs/linearizability.md` explains why |
 | Linearizability checker | `BruteForceAgreementTest` compares the checker with an exhaustive search on 50,000 small histories; it caught an unsound optimisation on its first history |
 | Snapshot content | A snapshot that carries the wrong state, and a recovery that skips replaying the log after restoring one, both break the simulation within twenty seeds |
 
