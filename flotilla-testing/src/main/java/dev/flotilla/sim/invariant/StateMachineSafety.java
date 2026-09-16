@@ -14,6 +14,9 @@ public final class StateMachineSafety implements Invariant {
     private final SortedMap<Long, LogEntry> appliedByIndex = new TreeMap<>();
     private final SortedMap<NodeId, Long> lastAppliedByNode = new TreeMap<>();
     private final SortedMap<NodeId, Integer> lifetimeByNode = new TreeMap<>();
+    private final SortedMap<NodeId, Long> restoredByNode = new TreeMap<>();
+    private final SortedMap<Long, Long> digestByIndex = new TreeMap<>();
+    private final SortedMap<Long, NodeId> digestWitnessByIndex = new TreeMap<>();
 
     @Override
     public String name() {
@@ -23,20 +26,30 @@ public final class StateMachineSafety implements Invariant {
     @Override
     public void observe(WorldView world) {
         for (NodeId node : world.nodes()) {
-            resetOnRestart(node, world.restarts(node));
+            boolean cameBack = restarted(node, world.restarts(node));
+            boolean installed = installedASnapshot(node, world.restoredFromSnapshotAt(node));
+            boolean moved = cameBack || installed;
             for (LogEntry entry : world.appliedThisStep(node)) {
                 checkNobodyAppliedSomethingElse(node, entry);
-                checkAppliedInOrder(node, entry);
+                if (!moved) {
+                    checkAppliedInOrder(node, entry, world);
+                }
             }
+            if (moved) {
+                lastAppliedByNode.put(node, world.appliedIndex(node));
+            }
+            checkReplicasHoldTheSameState(node, world.appliedIndex(node), world.appliedDigest(node));
         }
     }
 
-    private void resetOnRestart(NodeId node, int restarts) {
-        Integer known = lifetimeByNode.get(node);
-        if (known == null || known != restarts) {
-            lifetimeByNode.put(node, restarts);
-            lastAppliedByNode.remove(node);
-        }
+    private boolean restarted(NodeId node, int restarts) {
+        Integer known = lifetimeByNode.put(node, restarts);
+        return known != null && known.intValue() != restarts;
+    }
+
+    private boolean installedASnapshot(NodeId node, long restoredIndex) {
+        Long known = restoredByNode.put(node, restoredIndex);
+        return known != null && known.longValue() != restoredIndex;
     }
 
     private void checkNobodyAppliedSomethingElse(NodeId node, LogEntry entry) {
@@ -49,14 +62,38 @@ public final class StateMachineSafety implements Invariant {
         }
     }
 
-    private void checkAppliedInOrder(NodeId node, LogEntry entry) {
+    private void checkAppliedInOrder(NodeId node, LogEntry entry, WorldView world) {
         Long previous = lastAppliedByNode.get(node);
         if (previous != null && entry.index() != previous + 1) {
             throw new InvariantViolation(
                     name(),
                     node + " applied index " + entry.index() + " directly after " + previous
-                            + "; entries must be applied exactly once and in order");
+                            + "; entries must be applied exactly once and in order (restarts="
+                            + world.restarts(node) + ", restored from snapshot at "
+                            + world.restoredFromSnapshotAt(node) + ", applied through "
+                            + world.appliedIndex(node) + ", this step "
+                            + world.appliedThisStep(node).stream()
+                                    .map(LogEntry::index)
+                                    .toList() + ")");
         }
         lastAppliedByNode.put(node, entry.index());
+    }
+
+    private void checkReplicasHoldTheSameState(NodeId node, long appliedIndex, long digest) {
+        if (appliedIndex <= 0) {
+            return;
+        }
+        Long known = digestByIndex.putIfAbsent(appliedIndex, digest);
+        if (known == null) {
+            digestWitnessByIndex.put(appliedIndex, node);
+            return;
+        }
+        if (known.longValue() != digest) {
+            throw new InvariantViolation(
+                    name(),
+                    node + " has applied through index " + appliedIndex + " and holds state " + digest + ", but "
+                            + digestWitnessByIndex.get(appliedIndex) + " reached the same index holding " + known
+                            + "; two replicas at the same index must hold the same state");
+        }
     }
 }

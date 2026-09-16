@@ -7,14 +7,13 @@ package dev.flotilla.sim.invariant;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftRole;
-import java.util.List;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
 public final class LeaderAppendOnly implements Invariant {
 
     private final SortedMap<NodeId, Long> observedTerm = new TreeMap<>();
-    private final SortedMap<NodeId, List<LogEntry>> observedLog = new TreeMap<>();
+    private final SortedMap<NodeId, LogView> observedLog = new TreeMap<>();
 
     @Override
     public String name() {
@@ -31,29 +30,34 @@ public final class LeaderAppendOnly implements Invariant {
             }
 
             long term = world.term(node);
-            List<LogEntry> current = world.log(node);
+            LogView current = world.log(node);
             Long previousTerm = observedTerm.get(node);
-            List<LogEntry> previous = observedLog.get(node);
+            LogView previous = observedLog.get(node);
 
             if (previousTerm != null && previous != null && previousTerm == term) {
-                if (current.size() < previous.size()) {
-                    throw new InvariantViolation(
-                            name(),
-                            node + " was leader of term " + term + " and its log shrank from " + previous.size()
-                                    + " to " + current.size() + " entries");
-                }
-                for (int i = 0; i < previous.size(); i++) {
-                    if (!current.get(i).equals(previous.get(i))) {
-                        throw new InvariantViolation(
-                                name(),
-                                node + " was leader of term " + term + " and rewrote the entry at index "
-                                        + previous.get(i).index());
-                    }
-                }
+                compare(node, term, previous, current);
             }
 
             observedTerm.put(node, term);
             observedLog.put(node, current);
+        }
+    }
+
+    private void compare(NodeId node, long term, LogView previous, LogView current) {
+        if (current.lastIndex() < previous.lastIndex()) {
+            throw new InvariantViolation(
+                    name(),
+                    node + " was leader of term " + term + " and its log shrank from index " + previous.lastIndex()
+                            + " back to " + current.lastIndex());
+        }
+        long from = Math.max(previous.firstIndex(), current.firstIndex());
+        for (long index = from; index <= previous.lastIndex(); index++) {
+            LogEntry was = previous.at(index).orElseThrow();
+            LogEntry now = current.at(index).orElseThrow();
+            if (!was.equals(now)) {
+                throw new InvariantViolation(
+                        name(), node + " was leader of term " + term + " and rewrote the entry at index " + index);
+            }
         }
     }
 }

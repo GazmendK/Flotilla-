@@ -12,6 +12,15 @@ not stable before 1.0.0.
 
 ### Added
 
+- The simulation now snapshots and compacts while it runs, so a node that was down while the cluster
+  moved past it is caught up by a real `InstallSnapshot` under crashes and partitions. Its state
+  machine folds every applied entry into a digest and a snapshot carries that digest, which turns
+  "the follower caught up" into a checkable claim: two replicas that have applied through the same
+  index must hold the same state.
+- The invariant checkers address log entries by index instead of by position. Three of them compared
+  the first entry of one log against the first entry of another, which is correct only while every
+  log starts at index 1; against a compacted log one reported a violation that was not there and
+  another stopped checking the entries that mattered.
 - The snapshot protocol in the consensus core. A leader whose log no longer reaches a follower sends
   it a snapshot instead of entries, tracks that peer in a `SNAPSHOT` state so it receives nothing
   else meanwhile, and starts the transfer over if the answer never arrives. A follower refuses a

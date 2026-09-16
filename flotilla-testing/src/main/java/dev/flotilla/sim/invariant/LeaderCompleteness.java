@@ -7,7 +7,6 @@ package dev.flotilla.sim.invariant;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftRole;
-import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -40,7 +39,7 @@ public final class LeaderCompleteness implements Invariant {
     private void recordCommittedEntries(WorldView world, long highestTerm) {
         for (NodeId node : world.nodes()) {
             long commit = world.commitIndex(node);
-            for (LogEntry entry : world.log(node)) {
+            for (LogEntry entry : world.log(node).entries()) {
                 if (entry.index() > commit) {
                     break;
                 }
@@ -63,7 +62,7 @@ public final class LeaderCompleteness implements Invariant {
                 continue;
             }
             long term = world.term(node);
-            List<LogEntry> log = world.log(node);
+            LogView log = world.log(node);
 
             for (Map.Entry<Long, LogEntry> entry : committed.entrySet()) {
                 Long commitTerm = committedByTerm.get(entry.getKey());
@@ -71,13 +70,14 @@ public final class LeaderCompleteness implements Invariant {
                     continue;
                 }
                 long index = entry.getKey();
-                if (index > log.size()) {
-                    throw new InvariantViolation(
-                            name(),
-                            node + " leads term " + term + " but is missing committed index " + index
-                                    + ", which was committed by term " + commitTerm);
+                if (index <= log.snapshotIndex()) {
+                    continue;
                 }
-                LogEntry own = log.get((int) (index - 1));
+                LogEntry own = log.at(index)
+                        .orElseThrow(() -> new InvariantViolation(
+                                name(),
+                                node + " leads term " + term + " but is missing committed index " + index
+                                        + ", which was committed by term " + commitTerm));
                 if (!own.equals(entry.getValue())) {
                     throw new InvariantViolation(
                             name(),

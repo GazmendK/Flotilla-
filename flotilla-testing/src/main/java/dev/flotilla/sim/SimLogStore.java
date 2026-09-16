@@ -56,6 +56,7 @@ public final class SimLogStore implements LogStore {
     @Override
     public void compactTo(long index) {
         delegate.compactTo(index);
+        syncedThrough = Math.max(syncedThrough, index);
     }
 
     @Override

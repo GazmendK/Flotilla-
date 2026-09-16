@@ -18,7 +18,9 @@ public record SimConfig(
         double healProbability,
         double proposalProbability,
         int logMatchingCheckEveryTicks,
-        int maxEntriesPerAppend) {
+        int maxEntriesPerAppend,
+        double snapshotProbability,
+        int snapshotThresholdEntries) {
 
     public SimConfig {
         if (voters < 1) {
@@ -32,17 +34,21 @@ public record SimConfig(
             throw new IllegalArgumentException(
                     "logMatchingCheckEveryTicks must be at least 1, was " + logMatchingCheckEveryTicks);
         }
+        if (snapshotThresholdEntries < 1) {
+            throw new IllegalArgumentException(
+                    "snapshotThresholdEntries must be at least 1, was " + snapshotThresholdEntries);
+        }
     }
 
     public static SimConfig calm(int voters) {
-        return new SimConfig(voters, 20, 200, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 10, 64);
+        return new SimConfig(voters, 20, 200, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 10, 64, 0.05, 32);
     }
 
     public static SimConfig chaotic(int voters) {
-        return new SimConfig(voters, 20, 400, 0.02, 4000, 0.25, 0.05, 0.01, 0.10, 0.02, 0.05, 0.3, 10, 64);
+        return new SimConfig(voters, 20, 400, 0.02, 4000, 0.25, 0.05, 0.01, 0.10, 0.02, 0.05, 0.3, 10, 64, 0.10, 16);
     }
 
     public static SimConfig adversarial(int voters) {
-        return new SimConfig(voters, 20, 400, 0.02, 4000, 0.30, 0.05, 0.04, 0.25, 0.08, 0.05, 0.5, 5, 1);
+        return new SimConfig(voters, 20, 400, 0.02, 4000, 0.30, 0.05, 0.04, 0.25, 0.08, 0.05, 0.5, 5, 1, 0.20, 4);
     }
 }

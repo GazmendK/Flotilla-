@@ -48,6 +48,30 @@ The checkers are themselves tested. `InvariantTest` feeds each one a hand-built 
 violates exactly its property and asserts it fires — because a checker that only ever says "ok" is
 indistinguishable from no checker at all.
 
+
+## Compaction, and why the invariants had to change
+
+Nodes snapshot their applied state and compact their logs while the simulation runs, and a node
+that falls behind a compacted prefix is caught up by `InstallSnapshot`. Logs therefore no longer
+start at index 1, and three of the checkers compared logs **positionally** — the first entry of one
+log against the first entry of another. That is correct only while every log starts at the same
+place. Against a compacted log it is wrong in both directions: Monotonic Progress reports a false
+violation the moment the commit index passes the number of entries left, and Log Matching quietly
+stops comparing the entries that matter. All three now address entries by index, and `InvariantTest`
+holds a hand-built world for each case, including a compacted log checked against a full one.
+
+The simulated state machine folds every entry it applies into a digest, and a snapshot carries that
+digest. Two replicas that have applied through the same index must hold the same digest — which is
+what makes a snapshot transfer *checkable* rather than merely observable. Making a snapshot carry
+the wrong state, or letting recovery skip the log replay that follows a restore, breaks the
+simulation within twenty seeds.
+
+Two things happening in the same step cost an afternoon: a node can install a snapshot and crash
+before the step ends, and the per-step view cannot order those two events. The checker now treats a
+step in which a node restarted or installed a snapshot as one where its applied position moved for a
+reason it can see but cannot order, re-reads the position from the node, and resumes checking order
+from the next step. The content checks never stop.
+
 ## Reproducing a failure
 
 Every failure prints the seed:
@@ -125,3 +149,4 @@ Kept as a running list, because the honest measure of a test suite is what it ha
 |---|---|
 | 2026-08-10 | The first `LeaderCompleteness` checker was too strict: it demanded that *every* current leader hold every committed entry, including a stale leader in a lower term that had been partitioned away. The paper only requires it of leaders in higher terms. The simulation was right to fail; the checker was wrong. |
 | 2026-08-10 | Verified, by injection, that removing the current-term condition from the commit rule is caught — but only under the adversarial profile. See the section above. |
+| 2026-09-16 | Enabling compaction made three checkers fail: they compared logs by position, which stops meaning anything once a log starts above index 1. Then `StateMachineSafety` fired on a node that had installed a snapshot and crashed in the same step — a gap in the checker's model of the world, not in the code. Both are described above. |

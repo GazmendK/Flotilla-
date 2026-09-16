@@ -26,7 +26,13 @@ public interface WorldView {
 
     long commitIndex(NodeId id);
 
-    List<LogEntry> log(NodeId id);
+    LogView log(NodeId id);
+
+    long restoredFromSnapshotAt(NodeId id);
+
+    long appliedIndex(NodeId id);
+
+    long appliedDigest(NodeId id);
 
     List<LogEntry> appliedThisStep(NodeId id);
 }

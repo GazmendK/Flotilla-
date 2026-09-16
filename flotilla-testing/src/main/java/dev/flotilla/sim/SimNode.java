@@ -10,10 +10,12 @@ import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftConfig;
 import dev.flotilla.core.RaftNode;
+import dev.flotilla.core.Snapshot;
 import dev.flotilla.core.port.RandomSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class SimNode {
 
@@ -22,12 +24,14 @@ public final class SimNode {
     private final SimLogStore log = new SimLogStore();
     private final SimStableStore stable = new SimStableStore();
     private final InMemorySnapshotStore snapshots = new InMemorySnapshotStore();
+    private final SimStateMachine stateMachine = new SimStateMachine();
     private final long baseSeed;
     private final List<LogEntry> appliedHistory = new ArrayList<>();
 
     private RaftNode raft;
     private boolean running = true;
     private int restarts;
+    private long restoredFromSnapshotAt;
     private List<LogEntry> appliedThisStep = List.of();
 
     public SimNode(RaftConfig config, ClusterConfig cluster, long baseSeed) {
@@ -67,6 +71,10 @@ public final class SimNode {
         return snapshots;
     }
 
+    public SimStateMachine stateMachine() {
+        return stateMachine;
+    }
+
     public boolean isRunning() {
         return running;
     }
@@ -75,12 +83,21 @@ public final class SimNode {
         return restarts;
     }
 
+    public long restoredFromSnapshotAt() {
+        return restoredFromSnapshotAt;
+    }
+
     public void crash() {
         running = false;
         log.discardUnsynced();
         restarts++;
         raft = newRaftInstance();
         appliedThisStep = List.of();
+        stateMachine.recover(
+                snapshots.latest().map(Snapshot::lastIncludedIndex),
+                snapshots.latest().map(snapshot -> SimStateMachine.digestOf(snapshot.data())),
+                log,
+                stable.recovered().commitIndex());
     }
 
     public void restart() {
@@ -95,10 +112,28 @@ public final class SimNode {
         if (entries.isEmpty()) {
             return;
         }
+        entries.forEach(stateMachine::apply);
         List<LogEntry> merged = new ArrayList<>(appliedThisStep);
         merged.addAll(entries);
         appliedThisStep = List.copyOf(merged);
         appliedHistory.addAll(entries);
+    }
+
+    public void restoreFrom(Snapshot snapshot) {
+        stateMachine.restore(snapshot.lastIncludedIndex(), SimStateMachine.digestOf(snapshot.data()));
+        snapshots.save(snapshot);
+        restoredFromSnapshotAt = snapshot.lastIncludedIndex();
+    }
+
+    public Optional<Snapshot> takeSnapshot() {
+        long through = stateMachine.lastApplied();
+        if (through <= log.firstIndex() - 1 || through > log.lastIndex()) {
+            return Optional.empty();
+        }
+        Snapshot snapshot = new Snapshot(through, log.termAt(through), cluster, stateMachine.capture());
+        snapshots.save(snapshot);
+        raft.compactLog(through);
+        return Optional.of(snapshot);
     }
 
     public List<LogEntry> appliedThisStep() {

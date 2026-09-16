@@ -30,8 +30,10 @@ mechanism nobody can trust.
 | Current-term commit rule | `Figure8Test` fails with `expected: 0L but was: 2L` when the check is removed |
 | Conflict hints | `ConflictBacktrackingTest` bounds the number of round trips; plain decrementing would need a thousand |
 | Architecture rules | Adding `System.nanoTime()` to the core makes `CoreArchitectureTest` fail with the reason attached |
-| Invariant checkers | `InvariantTest` builds a violating world for each and asserts it fires |
+| Invariant checkers | `InvariantTest` builds a violating world for each and asserts it fires, including logs that start above index 1 |
 | Crash recovery | `CrashConsistencyTest` crashes at every durability operation, with directory entries durable only after a directory sync; it found a segment-creation bug and a truncation bug, each of which bricked recovery |
+| Snapshot rules in the core | Each of the eight rules in `SnapshotProtocolTest` is switched off in turn; each makes exactly one test fail |
+| Snapshot content | A snapshot that carries the wrong state, and a recovery that skips replaying the log after restoring one, both break the simulation within twenty seeds |
 
 ## What runs when
 

@@ -121,7 +121,7 @@ class KnownScenarioTest {
     @Test
     @DisplayName("links that are occasionally very slow do not break anything")
     void slowLinksAreSurvivable() {
-        SimConfig slow = new SimConfig(5, 20, 200, 0.30, 6000, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 10, 64);
+        SimConfig slow = new SimConfig(5, 20, 200, 0.30, 6000, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 10, 64, 0.05, 32);
         Simulation simulation = new Simulation(17, slow);
 
         simulation.run(600);

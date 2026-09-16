@@ -19,6 +19,7 @@ import dev.flotilla.sim.invariant.InvariantViolation;
 import dev.flotilla.sim.invariant.LeaderAppendOnly;
 import dev.flotilla.sim.invariant.LeaderCompleteness;
 import dev.flotilla.sim.invariant.LogMatching;
+import dev.flotilla.sim.invariant.LogView;
 import dev.flotilla.sim.invariant.MonotonicProgress;
 import dev.flotilla.sim.invariant.StateMachineSafety;
 import dev.flotilla.sim.invariant.WorldView;
@@ -40,14 +41,17 @@ public final class Simulation implements WorldView {
     private final VirtualClock clock = new VirtualClock();
     private final VirtualNetwork network;
     private final TreeMap<NodeId, SimNode> nodes = new TreeMap<>();
-    private final TreeMap<NodeId, List<LogEntry>> logSnapshots = new TreeMap<>();
+    private final TreeMap<NodeId, LogView> logSnapshots = new TreeMap<>();
     private final PriorityQueue<ScheduledMessage> inFlight = new PriorityQueue<>(ScheduledMessage.ORDER);
     private final List<Invariant> invariants;
     private final EventTrace trace = new EventTrace(TRACE_CAPACITY);
 
     private long sequence;
     private long proposalCounter;
+    private long snapshotsTaken;
+    private long snapshotInstalls;
     private boolean faultsEnabled = true;
+    private boolean proposalsEnabled = true;
 
     public Simulation(long seed, SimConfig config) {
         this.seed = seed;
@@ -101,6 +105,14 @@ public final class Simulation implements WorldView {
         faultsEnabled = true;
     }
 
+    public void settle(int ticks) {
+        faultsEnabled = false;
+        proposalsEnabled = false;
+        run(ticks);
+        proposalsEnabled = true;
+        faultsEnabled = true;
+    }
+
     public void step() {
         nodes.values().forEach(SimNode::beginStep);
 
@@ -116,6 +128,7 @@ public final class Simulation implements WorldView {
         }
 
         maybePropose();
+        maybeSnapshot();
         if (faultsEnabled) {
             injectFaults();
         }
@@ -147,6 +160,11 @@ public final class Simulation implements WorldView {
             return;
         }
 
+        ready.snapshot().ifPresent(snapshot -> {
+            node.restoreFrom(snapshot);
+            snapshotInstalls++;
+            trace.record(clock.now(), node.id() + " INSTALL snapshot through " + snapshot.lastIncludedIndex());
+        });
         ready.hardState().ifPresent(node.stable()::persist);
         if (!ready.entriesToPersist().isEmpty()) {
             node.log().syncThrough(ready.entriesToPersist().getLast().index());
@@ -172,7 +190,7 @@ public final class Simulation implements WorldView {
     }
 
     private void maybePropose() {
-        if (!random.chance(config.proposalProbability())) {
+        if (!random.chance(config.proposalProbability()) || !proposalsEnabled) {
             return;
         }
         List<SimNode> leaders = new ArrayList<>();
@@ -188,6 +206,25 @@ public final class Simulation implements WorldView {
         proposalCounter++;
         leader.raft().propose(Bytes.ofUtf8("v" + proposalCounter));
         drain(leader);
+    }
+
+    private void maybeSnapshot() {
+        if (!random.chance(config.snapshotProbability())) {
+            return;
+        }
+        for (SimNode node : nodes.values()) {
+            if (!node.isRunning()) {
+                continue;
+            }
+            long uncompacted = node.stateMachine().lastApplied() - (node.log().firstIndex() - 1);
+            if (uncompacted < config.snapshotThresholdEntries()) {
+                continue;
+            }
+            node.takeSnapshot().ifPresent(snapshot -> {
+                snapshotsTaken++;
+                trace.record(clock.now(), node.id() + " SNAPSHOT through " + snapshot.lastIncludedIndex());
+            });
+        }
     }
 
     private void injectFaults() {
@@ -214,7 +251,8 @@ public final class Simulation implements WorldView {
 
     private void checkInvariants() {
         logSnapshots.clear();
-        nodes.forEach((id, node) -> logSnapshots.put(id, node.log().snapshotEntries()));
+        nodes.forEach((id, node) -> logSnapshots.put(
+                id, new LogView(node.log().firstIndex(), node.log().snapshotEntries())));
 
         boolean runExpensive = clock.tickNumber() % config.logMatchingCheckEveryTicks() == 0;
         for (Invariant invariant : invariants) {
@@ -270,6 +308,10 @@ public final class Simulation implements WorldView {
                     .append(node.raft().role())
                     .append(" commit=")
                     .append(node.raft().commitIndex())
+                    .append(" base=")
+                    .append(node.log().firstIndex() - 1)
+                    .append(" applied=")
+                    .append(node.stateMachine().lastApplied())
                     .append(" log=");
             node.log()
                     .snapshotEntries()
@@ -321,6 +363,14 @@ public final class Simulation implements WorldView {
                 .orElse(0);
     }
 
+    public long snapshotsTaken() {
+        return snapshotsTaken;
+    }
+
+    public long snapshotInstalls() {
+        return snapshotInstalls;
+    }
+
     public long appliedEntryCount() {
         return nodes.values().stream()
                 .mapToLong(node -> node.appliedHistory().size())
@@ -363,9 +413,26 @@ public final class Simulation implements WorldView {
     }
 
     @Override
-    public List<LogEntry> log(NodeId id) {
-        List<LogEntry> cached = logSnapshots.get(id);
-        return cached == null ? node(id).log().snapshotEntries() : cached;
+    public LogView log(NodeId id) {
+        LogView cached = logSnapshots.get(id);
+        return cached == null
+                ? new LogView(node(id).log().firstIndex(), node(id).log().snapshotEntries())
+                : cached;
+    }
+
+    @Override
+    public long restoredFromSnapshotAt(NodeId id) {
+        return node(id).restoredFromSnapshotAt();
+    }
+
+    @Override
+    public long appliedIndex(NodeId id) {
+        return node(id).stateMachine().lastApplied();
+    }
+
+    @Override
+    public long appliedDigest(NodeId id) {
+        return node(id).stateMachine().digest();
     }
 
     @Override

@@ -31,18 +31,20 @@ public final class LogMatching implements Invariant {
         }
     }
 
-    private void compare(NodeId first, List<LogEntry> firstLog, NodeId second, List<LogEntry> secondLog) {
-        int common = Math.min(firstLog.size(), secondLog.size());
+    private void compare(NodeId first, LogView firstLog, NodeId second, LogView secondLog) {
+        long from = Math.max(firstLog.firstIndex(), secondLog.firstIndex());
+        long to = Math.min(firstLog.lastIndex(), secondLog.lastIndex());
         boolean diverged = false;
-        for (int i = 0; i < common; i++) {
-            LogEntry left = firstLog.get(i);
-            LogEntry right = secondLog.get(i);
+
+        for (long index = from; index <= to; index++) {
+            LogEntry left = firstLog.at(index).orElseThrow();
+            LogEntry right = secondLog.at(index).orElseThrow();
             if (!diverged) {
                 if (left.term() == right.term()) {
                     if (!left.equals(right)) {
                         throw new InvariantViolation(
                                 name(),
-                                first + " and " + second + " hold different entries at index " + left.index()
+                                first + " and " + second + " hold different entries at index " + index
                                         + " despite both being in term " + left.term());
                     }
                 } else {
@@ -51,8 +53,8 @@ public final class LogMatching implements Invariant {
             } else if (left.term() == right.term()) {
                 throw new InvariantViolation(
                         name(),
-                        first + " and " + second + " diverge before index " + left.index() + " yet share term "
-                                + left.term() + " there, which no correct pair of logs can");
+                        first + " and " + second + " diverge before index " + index + " yet share term " + left.term()
+                                + " there, which no correct pair of logs can");
             }
         }
     }

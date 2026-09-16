@@ -39,11 +39,11 @@ public final class MonotonicProgress implements Invariant {
             }
             highestCommit.put(node, commit);
 
-            if (commit > world.log(node).size()) {
+            if (commit > world.log(node).lastIndex()) {
                 throw new InvariantViolation(
                         name(),
-                        node + " has commit index " + commit + " but only "
-                                + world.log(node).size() + " entries in its log");
+                        node + " has commit index " + commit + " but its log ends at index "
+                                + world.log(node).lastIndex());
             }
         }
     }
