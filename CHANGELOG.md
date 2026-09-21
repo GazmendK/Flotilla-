@@ -12,6 +12,15 @@ not stable before 1.0.0.
 
 ### Added
 
+- Membership changes in the consensus core, one server at a time: add a learner, promote it, remove a
+  node. A configuration is a log entry and is in force from the moment it is appended, not when it
+  commits; a follower that has an uncommitted configuration overwritten falls back to the one before
+  it. Only one change may be in flight, none may be made before the leader has committed an entry of
+  its own term, and a change that would leave no reachable majority is refused with the arithmetic in
+  the message. A leader can remove itself and steps down once the removal commits. Learners are
+  replicated to but never counted, and a vote from outside the configuration is ignored.
+- The configuration survives compaction: a second snapshot, taken when no configuration entry is left
+  in the log, still carries it. Each of these guards was switched off in turn; each makes a test fail.
 - Reads that do not go through the log. A new `Query` RPC takes a consistency level per request:
   `LINEARIZABLE` (the default) confirms leadership with a majority and waits for the answering node
   to apply that far, `LEASE` answers from a leader lease when leases are enabled, and `STALE` answers

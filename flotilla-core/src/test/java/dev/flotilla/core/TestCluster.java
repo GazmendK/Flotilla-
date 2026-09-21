@@ -8,6 +8,7 @@ import dev.flotilla.core.message.AppendEntriesRequest;
 import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.core.port.RandomSource;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.SortedMap;
 import java.util.SortedSet;
@@ -24,7 +25,6 @@ final class TestCluster {
     private final SortedMap<NodeId, RaftNode> nodes;
     private final SortedMap<NodeId, InMemoryLogStore> logs;
     private final SortedMap<NodeId, InMemorySnapshotStore> snapshots;
-    private final ClusterConfig cluster;
     private final SortedMap<NodeId, List<Snapshot>> installedSnapshots = new TreeMap<>();
     private final SortedMap<NodeId, List<ReadState>> readStates = new TreeMap<>();
     private final SortedMap<NodeId, List<LogEntry>> applied = new TreeMap<>();
@@ -35,12 +35,10 @@ final class TestCluster {
     private TestCluster(
             SortedMap<NodeId, RaftNode> nodes,
             SortedMap<NodeId, InMemoryLogStore> logs,
-            SortedMap<NodeId, InMemorySnapshotStore> snapshots,
-            ClusterConfig cluster) {
+            SortedMap<NodeId, InMemorySnapshotStore> snapshots) {
         this.nodes = nodes;
         this.logs = logs;
         this.snapshots = snapshots;
-        this.cluster = cluster;
         nodes.keySet().forEach(id -> {
             applied.put(id, new ArrayList<>());
             installedSnapshots.put(id, new ArrayList<>());
@@ -65,7 +63,20 @@ final class TestCluster {
 
     static TestCluster withLogs(
             SortedMap<NodeId, List<LogEntry>> initialLogs, long initialTerm, UnaryOperator<RaftConfig.Builder> tuning) {
-        ClusterConfig cluster = ClusterConfig.ofVoters(initialLogs.keySet());
+        return create(initialLogs, ClusterConfig.ofVoters(initialLogs.keySet()), initialTerm, tuning);
+    }
+
+    static TestCluster withMembers(ClusterConfig initial, Collection<NodeId> nodes) {
+        SortedMap<NodeId, List<LogEntry>> empty = new TreeMap<>();
+        nodes.forEach(id -> empty.put(id, List.of()));
+        return create(empty, initial, 0, UnaryOperator.identity());
+    }
+
+    private static TestCluster create(
+            SortedMap<NodeId, List<LogEntry>> initialLogs,
+            ClusterConfig cluster,
+            long initialTerm,
+            UnaryOperator<RaftConfig.Builder> tuning) {
         SortedMap<NodeId, RaftNode> nodes = new TreeMap<>();
         SortedMap<NodeId, InMemoryLogStore> logs = new TreeMap<>();
         SortedMap<NodeId, InMemorySnapshotStore> snapshots = new TreeMap<>();
@@ -92,7 +103,7 @@ final class TestCluster {
                             RandomSource.seeded(seed),
                             new HardState(initialTerm, null, 0)));
         }
-        return new TestCluster(nodes, logs, snapshots, cluster);
+        return new TestCluster(nodes, logs, snapshots);
     }
 
     static List<LogEntry> logWithTerms(long... terms) {
@@ -211,7 +222,10 @@ final class TestCluster {
 
     Snapshot takeSnapshot(NodeId id, long throughIndex) {
         Snapshot snapshot = new Snapshot(
-                throughIndex, log(id).termAt(throughIndex), cluster, Bytes.ofUtf8("state through " + throughIndex));
+                throughIndex,
+                log(id).termAt(throughIndex),
+                node(id).configurationAt(throughIndex),
+                Bytes.ofUtf8("state through " + throughIndex));
         snapshots(id).save(snapshot);
         node(id).compactLog(throughIndex);
         return snapshot;

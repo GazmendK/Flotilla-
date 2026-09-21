@@ -132,7 +132,8 @@ public final class SimNode {
         if (through <= log.firstIndex() - 1 || through > log.lastIndex()) {
             return Optional.empty();
         }
-        Snapshot snapshot = new Snapshot(through, log.termAt(through), cluster, stateMachine.capture());
+        Snapshot snapshot =
+                new Snapshot(through, log.termAt(through), raft.configurationAt(through), stateMachine.capture());
         snapshots.save(snapshot);
         raft.compactLog(through);
         return Optional.of(snapshot);

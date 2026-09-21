@@ -28,12 +28,20 @@ public final class Leader implements RaftState {
     private final SortedMap<NodeId, Long> ackedRounds = new TreeMap<>();
     private final NavigableMap<Long, Long> roundSentAtTick = new TreeMap<>();
     private final ReadIndexQueue reads = new ReadIndexQueue();
+    private final SortedMap<NodeId, Long> lastHeardAtTick = new TreeMap<>();
 
     private long round;
     private long ticks;
 
     public void trackPeer(NodeId peer, long nextIndex) {
         peers.put(Objects.requireNonNull(peer, "peer"), new Progress(nextIndex));
+    }
+
+    public void untrackPeer(NodeId peer) {
+        peers.remove(peer);
+        ackedRounds.remove(peer);
+        recentlyActive.remove(peer);
+        lastHeardAtTick.remove(peer);
     }
 
     public SortedMap<NodeId, Progress> peers() {
@@ -47,14 +55,26 @@ public final class Leader implements RaftState {
 
     public void markActive(NodeId peer) {
         recentlyActive.add(Objects.requireNonNull(peer, "peer"));
+        lastHeardAtTick.put(peer, ticks);
+    }
+
+    public boolean heardFromWithin(NodeId peer, long windowTicks) {
+        Long heard = lastHeardAtTick.get(peer);
+        return heard != null && ticks - heard <= windowTicks;
     }
 
     public SortedSet<NodeId> recentlyActive() {
         return Collections.unmodifiableSortedSet(recentlyActive);
     }
 
-    public int recentlyActiveCount() {
-        return recentlyActive.size();
+    public int recentlyActiveAmong(Collection<NodeId> voters) {
+        int active = 0;
+        for (NodeId voter : voters) {
+            if (recentlyActive.contains(voter)) {
+                active++;
+            }
+        }
+        return active;
     }
 
     public void resetActivity(NodeId self) {

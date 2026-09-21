@@ -36,7 +36,6 @@ import org.jspecify.annotations.Nullable;
 public final class RaftNode {
 
     private final RaftConfig config;
-    private final ClusterConfig cluster;
     private final LogStore log;
     private final SnapshotStore snapshots;
     private final ElectionTimer electionTimer;
@@ -47,6 +46,10 @@ public final class RaftNode {
 
     private RaftState state;
     private long currentTerm;
+
+    private ClusterConfig cluster;
+    private ClusterConfig baseCluster;
+    private long configIndex;
 
     @Nullable
     private NodeId votedFor;
@@ -70,14 +73,14 @@ public final class RaftNode {
             RandomSource random,
             HardState persisted) {
         this.config = Objects.requireNonNull(config, "config");
-        this.cluster = Objects.requireNonNull(cluster, "cluster");
         this.log = Objects.requireNonNull(log, "log");
         this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
+        Objects.requireNonNull(cluster, "cluster");
         Objects.requireNonNull(persisted, "persisted");
-        if (!cluster.contains(config.nodeId())) {
-            throw new IllegalArgumentException(
-                    config.nodeId() + " is not a member of the cluster " + cluster.allMembers());
-        }
+        this.baseCluster =
+                log.firstIndex() > 1 ? snapshots.latest().map(Snapshot::cluster).orElse(cluster) : cluster;
+        this.cluster = baseCluster;
+        recomputeConfiguration();
         this.electionTimer = new ElectionTimer(config, Objects.requireNonNull(random, "random"));
         this.currentTerm = persisted.currentTerm();
         this.votedFor = persisted.votedFor();
@@ -126,6 +129,118 @@ public final class RaftNode {
 
     public boolean isLeader() {
         return state instanceof Leader;
+    }
+
+    public ClusterConfig configuration() {
+        return cluster;
+    }
+
+    public long configurationIndex() {
+        return configIndex;
+    }
+
+    public ClusterConfig configurationAt(long index) {
+        for (long candidate = Math.min(index, log.lastIndex()); candidate >= log.firstIndex(); candidate--) {
+            Optional<LogEntry> entry = log.entryAt(candidate);
+            if (entry.isPresent() && entry.get().type() == EntryType.CONFIGURATION) {
+                return ClusterConfigCodec.decode(entry.get().data());
+            }
+        }
+        return baseCluster;
+    }
+
+    @RaftSpec(value = "§4.1 Safety", source = RaftSpec.Source.DISSERTATION)
+    public ConfChangeResult proposeConfChange(ConfChange change) {
+        Objects.requireNonNull(change, "change");
+        if (!(state instanceof Leader leader)) {
+            return new ConfChangeResult.Rejected("Only the leader can change the configuration; "
+                    + leader().map(known -> "the leader is " + known).orElse("no leader is known"));
+        }
+        if (!hasCommittedInCurrentTerm()) {
+            return new ConfChangeResult.Rejected("This leader has not committed an entry of its own term yet. "
+                    + "Changing the configuration before that can produce two leaders with disjoint majorities.");
+        }
+        if (configIndex > commitIndex) {
+            return new ConfChangeResult.Rejected("The configuration change at index " + configIndex
+                    + " is not committed yet; only one change may be in flight at a time.");
+        }
+        ClusterConfig next;
+        try {
+            next = change.applyTo(cluster);
+        } catch (IllegalArgumentException impossible) {
+            return new ConfChangeResult.Rejected(String.valueOf(impossible.getMessage()));
+        }
+        Optional<String> unsafe = reasonAgainst(change, next, leader);
+        if (unsafe.isPresent()) {
+            return new ConfChangeResult.Rejected(unsafe.get());
+        }
+        long index = log.lastIndex() + 1;
+        appendToOwnLog(List.of(LogEntry.configuration(currentTerm, index, ClusterConfigCodec.encode(next))));
+        broadcastAppend();
+        return new ConfChangeResult.Accepted(index, next);
+    }
+
+    private Optional<String> reasonAgainst(ConfChange change, ClusterConfig next, Leader leader) {
+        if (change instanceof ConfChange.Promote promote) {
+            Progress progress = leader.progressFor(promote.node());
+            long match = progress == null ? 0 : progress.matchIndex();
+            if (match < commitIndex) {
+                return Optional.of(promote.node() + " has replicated through index " + match
+                        + " but the cluster has committed through " + commitIndex
+                        + ". Promoting a learner that has not caught up lowers availability until it does.");
+            }
+        }
+        int reachable = 0;
+        for (NodeId voter : next.voters()) {
+            if (voter.equals(id()) || leader.heardFromWithin(voter, config.electionTimeoutMinTicks())) {
+                reachable++;
+            }
+        }
+        if (reachable < next.quorum()) {
+            return Optional.of("After this change " + next.voters().size() + " voters would need a majority of "
+                    + next.quorum() + ", but only " + reachable + " of them have been heard from recently. "
+                    + "The cluster would stop making progress.");
+        }
+        return Optional.empty();
+    }
+
+    private void recomputeConfiguration() {
+        for (long candidate = log.lastIndex(); candidate >= log.firstIndex(); candidate--) {
+            Optional<LogEntry> entry = log.entryAt(candidate);
+            if (entry.isPresent() && entry.get().type() == EntryType.CONFIGURATION) {
+                cluster = ClusterConfigCodec.decode(entry.get().data());
+                configIndex = candidate;
+                return;
+            }
+        }
+        cluster = baseCluster;
+        configIndex = log.firstIndex() - 1;
+    }
+
+    @RaftSpec(value = "§4.1 Safety", source = RaftSpec.Source.DISSERTATION)
+    private void adoptConfigurationsIn(List<LogEntry> appended) {
+        for (LogEntry entry : appended) {
+            if (entry.type() == EntryType.CONFIGURATION) {
+                cluster = ClusterConfigCodec.decode(entry.data());
+                configIndex = entry.index();
+            }
+        }
+        if (state instanceof Leader leader) {
+            trackMembers(leader);
+        }
+    }
+
+    private void trackMembers(Leader leader) {
+        for (NodeId member : cluster.allMembers()) {
+            if (!member.equals(id()) && leader.progressFor(member) == null) {
+                leader.trackPeer(member, log.lastIndex() + 1);
+            }
+        }
+        for (NodeId tracked : List.copyOf(leader.peers().keySet())) {
+            if (!cluster.contains(tracked)) {
+                leader.untrackPeer(tracked);
+            }
+        }
     }
 
     public boolean propose(Bytes command) {
@@ -231,6 +346,7 @@ public final class RaftNode {
             throw new IllegalArgumentException("Cannot compact the log through index " + throughIndex
                     + "; only entries up to index " + emittedCommitIndex + " have been handed to the state machine.");
         }
+        baseCluster = configurationAt(throughIndex);
         log.compactTo(throughIndex);
     }
 
@@ -367,7 +483,7 @@ public final class RaftNode {
 
         if (config.checkQuorum() && electionTimer.elapsedTicks() >= config.electionTimeoutMinTicks()) {
             electionTimer.reset();
-            if (leader.recentlyActiveCount() < cluster.quorum()) {
+            if (leader.recentlyActiveAmong(cluster.voters()) < cluster.quorum()) {
                 becomeFollower(currentTerm, null);
             } else {
                 leader.resetActivity(id());
@@ -389,6 +505,9 @@ public final class RaftNode {
 
     @RaftSpec("§5.2 Leader election")
     private void startElection(boolean preVote) {
+        if (!cluster.isVoter(id())) {
+            return;
+        }
         if (preVote) {
             state = new Candidate(true);
         } else {
@@ -460,6 +579,9 @@ public final class RaftNode {
         if (!(state instanceof Candidate candidate) || candidate.isPreVote() != response.preVote()) {
             return;
         }
+        if (!cluster.isVoter(response.from())) {
+            return;
+        }
         candidate.recordVote(response.from(), response.voteGranted());
 
         if (candidate.grantedCount() >= cluster.quorum()) {
@@ -518,6 +640,8 @@ public final class RaftNode {
         }
 
         log.resetTo(index, snapshot.lastIncludedTerm());
+        baseCluster = snapshot.cluster();
+        recomputeConfiguration();
         unpersisted.clear();
         commitIndex = index;
         emittedCommitIndex = index;
@@ -541,6 +665,9 @@ public final class RaftNode {
         }
         if (conflictIndex > 0) {
             log.truncateSuffixFrom(conflictIndex);
+            if (conflictIndex <= configIndex) {
+                recomputeConfiguration();
+            }
         }
         long firstMissing = log.lastIndex() + 1;
         List<LogEntry> toAppend =
@@ -548,6 +675,7 @@ public final class RaftNode {
         if (!toAppend.isEmpty()) {
             log.append(toAppend);
             unpersisted.addAll(toAppend);
+            adoptConfigurationsIn(toAppend);
         }
         return entries.getLast().index();
     }
@@ -670,6 +798,9 @@ public final class RaftNode {
             commitIndex = replicatedOnQuorum;
             startReadRoundIfPossible(leader);
         }
+        if (!cluster.isVoter(id()) && commitIndex >= configIndex) {
+            becomeFollower(currentTerm, null);
+        }
     }
 
     private void becomeFollower(long term, @Nullable NodeId leader) {
@@ -701,6 +832,7 @@ public final class RaftNode {
     private void appendToOwnLog(List<LogEntry> entries) {
         log.append(entries);
         unpersisted.addAll(entries);
+        adoptConfigurationsIn(entries);
         if (state instanceof Leader leader) {
             maybeAdvanceLeaderCommit(leader);
         }
@@ -725,7 +857,7 @@ public final class RaftNode {
     }
 
     private void replicateTo(NodeId peer, Progress progress) {
-        if (progress.state() == ProgressState.SNAPSHOT) {
+        if (!(state instanceof Leader) || progress.state() == ProgressState.SNAPSHOT) {
             return;
         }
         if (progress.nextIndex() < log.firstIndex()) {
