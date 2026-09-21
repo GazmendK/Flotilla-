@@ -106,7 +106,7 @@ public final class SimNode {
         running = true;
     }
 
-    public void beginStep() {
+    public void endStep() {
         appliedThisStep = List.of();
     }
 

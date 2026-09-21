@@ -6,12 +6,15 @@ package dev.flotilla.sim;
 
 import dev.flotilla.core.Bytes;
 import dev.flotilla.core.ClusterConfig;
+import dev.flotilla.core.ConfChange;
+import dev.flotilla.core.ConfChangeResult;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftConfig;
 import dev.flotilla.core.RaftNode;
 import dev.flotilla.core.RaftRole;
 import dev.flotilla.core.Ready;
+import dev.flotilla.core.TransferResult;
 import dev.flotilla.core.message.RaftMessage;
 import dev.flotilla.sim.invariant.ElectionSafety;
 import dev.flotilla.sim.invariant.Invariant;
@@ -21,6 +24,7 @@ import dev.flotilla.sim.invariant.LeaderCompleteness;
 import dev.flotilla.sim.invariant.LogMatching;
 import dev.flotilla.sim.invariant.LogView;
 import dev.flotilla.sim.invariant.MonotonicProgress;
+import dev.flotilla.sim.invariant.OneChangeAtATime;
 import dev.flotilla.sim.invariant.StateMachineSafety;
 import dev.flotilla.sim.invariant.WorldView;
 import java.util.ArrayList;
@@ -59,15 +63,22 @@ public final class Simulation implements WorldView {
     }
 
     public Simulation(long seed, SimConfig config, WorkloadConfig workloadConfig) {
+        this(seed, config, workloadConfig, 0);
+    }
+
+    public Simulation(long seed, SimConfig config, WorkloadConfig workloadConfig, int spares) {
+        if (spares < 0) {
+            throw new IllegalArgumentException("spares must not be negative, was " + spares);
+        }
         this.seed = seed;
         this.config = config;
         this.random = new DeterministicRandom(seed);
         this.workload = new SimWorkload(workloadConfig, seed);
 
-        List<NodeId> ids = IntStream.rangeClosed(1, config.voters())
+        List<NodeId> ids = IntStream.rangeClosed(1, config.voters() + spares)
                 .mapToObj(index -> NodeId.of("n" + index))
                 .toList();
-        ClusterConfig cluster = ClusterConfig.ofVoters(ids);
+        ClusterConfig cluster = ClusterConfig.ofVoters(ids.subList(0, config.voters()));
         long nodeSeed = seed;
         for (NodeId id : ids) {
             nodeSeed = nodeSeed * 31 + 17;
@@ -85,7 +96,8 @@ public final class Simulation implements WorldView {
                 new LeaderCompleteness(),
                 new StateMachineSafety(),
                 new MonotonicProgress(),
-                new LogMatching());
+                new LogMatching(),
+                new OneChangeAtATime());
     }
 
     public static Simulation of(long seed) {
@@ -127,8 +139,6 @@ public final class Simulation implements WorldView {
     }
 
     public void step() {
-        nodes.values().forEach(SimNode::beginStep);
-
         long target = clock.now() + VirtualClock.UNITS_PER_TICK;
         deliverUntil(target);
         clock.advanceTo(target);
@@ -147,6 +157,7 @@ public final class Simulation implements WorldView {
             injectFaults();
         }
         checkInvariants();
+        nodes.values().forEach(SimNode::endStep);
     }
 
     private void deliverUntil(long target) {
@@ -347,6 +358,28 @@ public final class Simulation implements WorldView {
         boolean accepted = node.raft().propose(Bytes.ofUtf8(value));
         drain(node);
         return accepted;
+    }
+
+    public ConfChangeResult proposeConfChange(NodeId id, ConfChange change) {
+        SimNode node = node(id);
+        if (!node.isRunning()) {
+            return new ConfChangeResult.Rejected(id + " is down");
+        }
+        ConfChangeResult result = node.raft().proposeConfChange(change);
+        trace.record(clock.now(), id + " CONF " + change + " -> " + result);
+        drain(node);
+        return result;
+    }
+
+    public TransferResult transferLeadership(NodeId id, NodeId target) {
+        SimNode node = node(id);
+        if (!node.isRunning()) {
+            return new TransferResult.Rejected(id + " is down");
+        }
+        TransferResult result = node.raft().transferLeadership(target);
+        trace.record(clock.now(), id + " TRANSFER to " + target + " -> " + result);
+        drain(node);
+        return result;
     }
 
     public boolean leaseRead(NodeId id, Bytes requestId) {

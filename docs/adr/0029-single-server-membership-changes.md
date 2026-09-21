@@ -76,3 +76,17 @@ round trip is what the errata costs, and it is cheap.
 - A node that is not in its starting configuration may run; it simply never campaigns until a
   configuration that makes it a voter reaches its log. That is how a new node joins.
 - Every guard above is tested with itself switched off; each makes a test in `MembershipTest` fail.
+
+## Amendment — 2026-09-21: a removed node is not done until its removal commits
+
+"A node outside the configuration never campaigns" was too strong. The membership simulation found
+a cluster of two in which the leader appended its own removal and lost leadership before the other
+node received the entry. The removed node, no longer a voter in its latest configuration, never
+campaigned; the other node still counted it as a voter, needed its vote, and could not get it with
+the shorter log. Nobody could lead again.
+
+The rule is now the dissertation's (§4.2.2): a node that is a voter in the configuration before its
+latest one, while that latest one has not committed, still campaigns — and does not count its own
+vote, since it is not a voter of the configuration the election is decided in. Once the removal
+commits, it stops for good. `MembershipTest` reproduces the deadlock directly, and fails both when
+the rule is removed and when the node counts its own vote.

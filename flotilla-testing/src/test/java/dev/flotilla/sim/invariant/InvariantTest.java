@@ -8,6 +8,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.flotilla.core.Bytes;
+import dev.flotilla.core.ClusterConfig;
+import dev.flotilla.core.ClusterConfigCodec;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftRole;
@@ -22,6 +24,8 @@ class InvariantTest {
 
     private static final NodeId N1 = NodeId.of("n1");
     private static final NodeId N2 = NodeId.of("n2");
+    private static final NodeId N3 = NodeId.of("n3");
+    private static final NodeId N4 = NodeId.of("n4");
 
     private record NodeState(
             boolean running,
@@ -383,5 +387,51 @@ class InvariantTest {
         assertThatThrownBy(() -> new StateMachineSafety().observe(world))
                 .isInstanceOf(InvariantViolation.class)
                 .hasMessageContaining("must hold the same state");
+    }
+
+    private static LogEntry configuration(long index, ClusterConfig config) {
+        return LogEntry.configuration(1, index, ClusterConfigCodec.encode(config));
+    }
+
+    @Test
+    @DisplayName("One Change At A Time rejects consecutive configurations that differ in two servers")
+    void oneChangeAtATimeDetectsATwoServerStep() {
+        List<LogEntry> entries = List.of(
+                configuration(1, ClusterConfig.ofVoters(N1, N2, N3)),
+                LogEntry.noOp(1, 2),
+                configuration(3, ClusterConfig.ofVoters(N1, N4)));
+        FakeWorld world = new FakeWorld().with(N1, node(RaftRole.FOLLOWER, 1, 3, entries));
+
+        assertThatThrownBy(() -> new OneChangeAtATime().observe(world))
+                .isInstanceOf(InvariantViolation.class)
+                .hasMessageContaining("changes [n2, n3, n4]");
+    }
+
+    @Test
+    @DisplayName("One Change At A Time rejects a leader with two uncommitted configurations")
+    void oneChangeAtATimeDetectsTwoChangesInFlight() {
+        ClusterConfig trio = ClusterConfig.ofVoters(N1, N2, N3);
+        List<LogEntry> entries = List.of(
+                LogEntry.noOp(1, 1),
+                configuration(2, trio.withLearner(N4)),
+                configuration(3, trio.withLearner(N4).withPromotion(N4)));
+        FakeWorld world = new FakeWorld().with(N1, node(RaftRole.LEADER, 1, 1, entries));
+
+        assertThatThrownBy(() -> new OneChangeAtATime().observe(world))
+                .isInstanceOf(InvariantViolation.class)
+                .hasMessageContaining("2 uncommitted configurations");
+    }
+
+    @Test
+    @DisplayName("One Change At A Time accepts the same log on a follower, whose commit index may simply lag")
+    void oneChangeAtATimeAcceptsALaggingFollower() {
+        ClusterConfig trio = ClusterConfig.ofVoters(N1, N2, N3);
+        List<LogEntry> entries = List.of(
+                LogEntry.noOp(1, 1),
+                configuration(2, trio.withLearner(N4)),
+                configuration(3, trio.withLearner(N4).withPromotion(N4)));
+        FakeWorld world = new FakeWorld().with(N1, node(RaftRole.FOLLOWER, 1, 1, entries));
+
+        assertThatCode(() -> new OneChangeAtATime().observe(world)).doesNotThrowAnyException();
     }
 }

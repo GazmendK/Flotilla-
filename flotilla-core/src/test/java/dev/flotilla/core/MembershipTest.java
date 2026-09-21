@@ -184,6 +184,40 @@ class MembershipTest {
     }
 
     @Test
+    @DisplayName("a leader deposed before its own removal commits still campaigns, or nobody could ever lead again")
+    void aRemovedLeaderFinishesItsOwnRemoval() {
+        TestCluster cluster = TestCluster.withMembers(ClusterConfig.ofVoters(N1, N2), List.of(N1, N2));
+        cluster.tick(100);
+        NodeId leader = cluster.singleLeader();
+        NodeId survivor = leader.equals(N1) ? N2 : N1;
+        cluster.propose(leader, "committed by both");
+        cluster.isolate(survivor);
+
+        assertThat(cluster.node(leader)
+                        .proposeConfChange(new ConfChange.Remove(leader))
+                        .isAccepted())
+                .isTrue();
+        cluster.tick(30);
+        assertThat(cluster.node(leader).isLeader())
+                .as("CheckQuorum deposes it: the only voter it now counts is out of reach")
+                .isFalse();
+        assertThat(cluster.node(leader).configuration().voters()).containsExactly(survivor);
+        assertThat(cluster.node(survivor).configuration().voters())
+                .as("the survivor never received the removal")
+                .containsExactly(N1, N2);
+
+        cluster.heal();
+        cluster.tick(100);
+
+        assertThat(cluster.singleLeader())
+                .as("the survivor needs the removed node's vote but has the shorter log; only the removed node "
+                        + "can finish the change it started")
+                .isEqualTo(survivor);
+        assertThat(cluster.node(survivor).configuration().voters()).containsExactly(survivor);
+        assertThat(cluster.node(survivor).configurationIndex()).isLessThanOrEqualTo(cluster.commitIndex(survivor));
+    }
+
+    @Test
     @DisplayName("a removal that would leave no reachable majority is refused, with the arithmetic in the message")
     void aRemovalThatBreaksTheQuorumIsRefused() {
         TestCluster cluster = trioWithSpares();

@@ -12,6 +12,11 @@ not stable before 1.0.0.
 
 ### Added
 
+- `MembershipChaosTest`: three voters and two spare nodes, with learners added, promoted and
+  removed and leadership handed around while nodes crash and the network partitions, on sixty seeds
+  by default. A new invariant checks that consecutive configurations differ in one server and that
+  no leader has two changes in flight; after the faults stop, the last configuration must commit
+  everywhere.
 - Catch-up rounds for learners: the leader measures how long a learner takes to acknowledge
   everything the leader had when a round began, and a promotion is refused until the last round
   took less than an election timeout and the current one has not already taken longer.
@@ -219,6 +224,14 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- A leader that appended its own removal and lost leadership before anyone else received the entry
+  left the cluster unable to elect anyone: it no longer campaigned, and the remaining voter needed its
+  vote. A node removed by a configuration that has not committed yet now still campaigns, without
+  counting its own vote (dissertation §4.2.2). Found by the membership simulation on its first twenty
+  seeds.
+- The simulation cleared the entries applied in a step before the checkers saw them whenever they
+  were applied between two steps, which a configuration change in a single-voter cluster does. They
+  are now cleared after the checkers run.
 - The snapshot pause was measured on one machine. Copying the key-value map was supposed to be the
   cheap half of a snapshot — 15 ms against 29 ms of encoding — and a test asserted it. On CI copying
   took 43 ms against 41 on Linux and 31 ms against 8 on macOS, and the test failed. The map is now

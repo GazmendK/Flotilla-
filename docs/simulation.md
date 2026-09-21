@@ -30,7 +30,7 @@ before sending — is what the simulation enforces.
 ## What is checked
 
 Every one of the five safety properties from Figure 3 of the paper is checked after **every**
-step, plus two properties the paper leaves implicit.
+step, plus three properties the paper leaves implicit.
 
 | Invariant | Statement |
 |---|---|
@@ -40,6 +40,7 @@ step, plus two properties the paper leaves implicit.
 | Leader Completeness | An entry committed by some term is present in every leader of a higher term. |
 | State Machine Safety | No two nodes apply different entries at the same index, and entries are applied exactly once and in order. |
 | Monotonic Progress | Term and commit index never move backwards within a process lifetime, and the commit index never exceeds the log. |
+| One Change At A Time | Consecutive configurations in any log differ in at most one server, and no leader holds more than one uncommitted configuration. |
 
 Log Matching is O(nodes² × log length) and runs every few ticks rather than every step; the rest
 run continuously.
@@ -71,6 +72,40 @@ before the step ends, and the per-step view cannot order those two events. The c
 step in which a node restarted or installed a snapshot as one where its applied position moved for a
 reason it can see but cannot order, re-reads the position from the node, and resumes checking order
 from the next step. The content checks never stop.
+
+## Membership changes
+
+`MembershipChaosTest` starts three voters and two spare nodes that belong to no configuration, and
+while the usual faults run it keeps changing the cluster: a random leader is asked to add a spare as
+a learner, promote a learner, remove any member — itself included — or hand leadership to another
+voter. Most requests are refused, for the reasons the core gives, and the refusal must say why.
+After every step, a leader that is not a voter in its own configuration must have an uncommitted
+change that removed it. When the faults stop, the cluster must elect a leader, commit its last
+configuration, and bring every voter to the same configuration and commit index. Each run makes
+twenty to forty accepted changes; one that makes fewer than five fails, so a pass cannot come from
+doing nothing. The default sixty seeds pass, and so did a thousand more run once.
+
+Each guard in the core was then switched off in turn and the sixty seeds run against it:
+
+| Guard removed | Seeds failing | How |
+|---|---|---|
+| A removed leader steps down once its removal commits | 48 of 60 | the per-step check on leaders |
+| Followers adopt a configuration when they append it | 46 of 60 | One Change At A Time, voters disagreeing, Leader Completeness, Election Safety |
+| A snapshot carries the configuration at its index | 36 of 60 | Leader Completeness, Election Safety |
+| Only one change in flight | 16 of 60 | One Change At A Time; with that checker also removed, **2 of 60 still lose a committed entry** |
+| A removed node campaigns until its removal commits | 3 of 60 | no leader once the faults stop |
+| An installed snapshot replaces the configuration | 2 of 60 | Leader Completeness |
+| No change before an entry of the leader's own term commits | **0 of 60** | only `MembershipTest` |
+| A truncated configuration entry takes its configuration with it | **0 of 60** | only `MembershipTest` |
+| Votes from outside the configuration are ignored | **0 of 60** | only `MembershipTest` |
+
+The fourth row is the reason the rule exists: with two changes in flight and no checker looking for
+them, the simulation produces two majorities that do not overlap, and a committed entry disappears.
+The last three rows are the honest part. The errata case needs a leader to be elected with an older
+configuration change still uncommitted in its log and to start a new one at once, and random faults
+rarely line that up; the other two need a configuration entry to be overwritten, or a removed node's
+vote to decide an election, at exactly the wrong moment. Each has a targeted test that fails the
+moment its guard is removed — the same division of labour as with Figure 8, described below.
 
 ## Reproducing a failure
 
@@ -150,4 +185,6 @@ Kept as a running list, because the honest measure of a test suite is what it ha
 | 2026-08-10 | The first `LeaderCompleteness` checker was too strict: it demanded that *every* current leader hold every committed entry, including a stale leader in a lower term that had been partitioned away. The paper only requires it of leaders in higher terms. The simulation was right to fail; the checker was wrong. |
 | 2026-08-10 | Verified, by injection, that removing the current-term condition from the commit rule is caught — but only under the adversarial profile. See the section above. |
 | 2026-09-16 | Enabling compaction made three checkers fail: they compared logs by position, which stops meaning anything once a log starts above index 1. Then `StateMachineSafety` fired on a node that had installed a snapshot and crashed in the same step — a gap in the checker's model of the world, not in the code. Both are described above. |
+| 2026-09-21 | `MembershipChaosTest` failed on nineteen seeds of twenty with a gap in the applied entries. The driver changes the configuration *between* steps, and in a single-voter cluster the change commits and is applied at once — but the list of entries applied in a step was cleared at the start of the next one, before any checker had seen it. It is now cleared after the checkers run. A harness bug, not a Raft bug. |
+| 2026-09-21 | The twentieth seed found a real one: a leader of two nodes appended its own removal, lost leadership before the other node received the entry, and the cluster could never elect anyone again. The removed node did not campaign, because it was no longer a voter in its latest configuration; the other needed its vote and could not get it with a shorter log. The dissertation (§4.2.2) says what to do: a node removed by a configuration that has not committed yet still campaigns, without counting its own vote. `MembershipTest` now reproduces the deadlock in a few lines. |
 | 2026-09-16 | With one timestamp per step, a write acknowledged and a read sent right after it looked simultaneous to the linearizability checker, which correctly let the read go first — and so a stale read passed. A harness bug, found by switching off leadership confirmation in the read path and watching nothing fail. |

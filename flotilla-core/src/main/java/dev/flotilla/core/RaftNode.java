@@ -561,7 +561,7 @@ public final class RaftNode {
 
     private void tickElectionTimeout() {
         electionTimer.tick();
-        if (electionTimer.hasExpired() && cluster.isVoter(id())) {
+        if (electionTimer.hasExpired() && mayCampaign()) {
             campaign();
         }
     }
@@ -606,7 +606,7 @@ public final class RaftNode {
     }
 
     private void startElection(boolean preVote, boolean transfer) {
-        if (!cluster.isVoter(id())) {
+        if (!mayCampaign()) {
             return;
         }
         if (preVote) {
@@ -619,7 +619,9 @@ public final class RaftNode {
         electionTimer.reset();
 
         Candidate candidate = (Candidate) state;
-        candidate.recordVote(id(), true);
+        if (cluster.isVoter(id())) {
+            candidate.recordVote(id(), true);
+        }
         if (candidate.grantedCount() >= cluster.quorum()) {
             winElection(preVote);
             return;
@@ -633,6 +635,13 @@ public final class RaftNode {
             send(new RequestVoteRequest(
                     id(), peer, campaignTerm, log.lastIndex(), lastLogTerm(), preVote, transfer && !preVote));
         }
+    }
+
+    @RaftSpec(value = "§4.2.2 Removing the current leader", source = RaftSpec.Source.DISSERTATION)
+    private boolean mayCampaign() {
+        return cluster.isVoter(id())
+                || (configIndex > commitIndex
+                        && configurationAt(configIndex - 1).isVoter(id()));
     }
 
     private void winElection(boolean preVote) {
