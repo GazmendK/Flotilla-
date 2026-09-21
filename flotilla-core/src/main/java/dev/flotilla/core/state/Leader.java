@@ -29,6 +29,13 @@ public final class Leader implements RaftState {
     private final NavigableMap<Long, Long> roundSentAtTick = new TreeMap<>();
     private final ReadIndexQueue reads = new ReadIndexQueue();
     private final SortedMap<NodeId, Long> lastHeardAtTick = new TreeMap<>();
+    private final SortedMap<NodeId, CatchUpTracker> catchUps = new TreeMap<>();
+
+    @Nullable
+    private NodeId transferee;
+
+    private long transferStartedAtTick;
+    private boolean leaseForfeited;
 
     private long round;
     private long ticks;
@@ -42,6 +49,7 @@ public final class Leader implements RaftState {
         ackedRounds.remove(peer);
         recentlyActive.remove(peer);
         lastHeardAtTick.remove(peer);
+        catchUps.remove(peer);
     }
 
     public SortedMap<NodeId, Progress> peers() {
@@ -119,6 +127,45 @@ public final class Leader implements RaftState {
     public long ticksSinceRoundWasSent(long confirmedRound) {
         Long sentAt = roundSentAtTick.get(confirmedRound);
         return sentAt == null ? Long.MAX_VALUE : ticks - sentAt;
+    }
+
+    public void trackCatchUp(NodeId learner, long target) {
+        catchUps.putIfAbsent(Objects.requireNonNull(learner, "learner"), new CatchUpTracker(target, ticks));
+    }
+
+    public void forgetCatchUp(NodeId node) {
+        catchUps.remove(node);
+    }
+
+    @Nullable
+    public CatchUpTracker catchUpOf(NodeId learner) {
+        return catchUps.get(learner);
+    }
+
+    public void beginTransfer(NodeId target) {
+        transferee = Objects.requireNonNull(target, "target");
+        transferStartedAtTick = ticks;
+    }
+
+    public void endTransfer() {
+        transferee = null;
+    }
+
+    @Nullable
+    public NodeId transferee() {
+        return transferee;
+    }
+
+    public long ticksSinceTransferBegan() {
+        return ticks - transferStartedAtTick;
+    }
+
+    public void forfeitLease() {
+        leaseForfeited = true;
+    }
+
+    public boolean hasForfeitedLease() {
+        return leaseForfeited;
     }
 
     public ReadIndexQueue reads() {

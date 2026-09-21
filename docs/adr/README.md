@@ -72,3 +72,4 @@ We use a light [MADR](https://adr.github.io/madr/) variant:
 | [0027](0027-a-linearizability-checker-of-our-own.md) | A linearizability checker of our own, checked against brute force | Accepted |
 | [0028](0028-readindex-by-default-leases-by-choice.md) | ReadIndex by default, leases only by choice | Accepted |
 | [0029](0029-single-server-membership-changes.md) | Membership changes one server at a time, in force from the moment they are appended | Accepted |
+| [0030](0030-catch-up-rounds-and-leadership-transfer.md) | A learner is promoted after a quick round, and leadership is handed over, not fought over | Accepted |

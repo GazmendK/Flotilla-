@@ -86,9 +86,9 @@ construction of the election and commit rules only.
 | Leader lease against disruptive votes | `RaftNode.isWithinLeaderLease` | done |
 | Conflict hints for fast log backtracking | `RaftNode.nextIndexAfterRejection` | done, see ADR-0012 |
 | Batching and pipelining with an inflight window | `state.Progress`, `RaftConfig` | done |
-| Learners (*dissertation* §4.2.1) | `ConfChange.AddLearner`, `ConfChange.Promote` | done |
+| Learners and catch-up rounds (*dissertation* §4.2.1) | `ConfChange.AddLearner`, `state.CatchUpTracker`, `RaftNode.catchUpStatus` | done, see ADR-0030 |
 | Single-server membership changes (*dissertation* §4.1) | `RaftNode.proposeConfChange`, `adoptConfigurationsIn` | done, see ADR-0029 |
-| Leadership transfer (*dissertation* §3.10) | `TimeoutNowRequest` | message exists, handled in Phase 12 |
+| Leadership transfer (*dissertation* §3.10) | `RaftNode.transferLeadership`, `TimeoutNowRequest` | done, see ADR-0030 |
 | ReadIndex (*dissertation* §6.4) | `RaftNode.readIndex`, `state.ReadIndexQueue`, rounds on `AppendEntries` | done, see ADR-0028 |
 | Lease reads (*dissertation* §6.4.1) | `RaftNode.leaseRead`, `isInStartupQuietPeriod` | done, off by default, see ADR-0028 |
 | Snapshots (Figure 13) | `RaftNode.handleInstallSnapshot`, `sendSnapshot`, `Progress.SNAPSHOT` | done in the core, see ADR-0025 |

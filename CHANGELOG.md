@@ -12,6 +12,16 @@ not stable before 1.0.0.
 
 ### Added
 
+- Catch-up rounds for learners: the leader measures how long a learner takes to acknowledge
+  everything the leader had when a round began, and a promotion is refused until the last round
+  took less than an election timeout and the current one has not already taken longer.
+  `RaftNode.catchUpStatus` reports the rounds, and a refused promotion quotes them.
+- Leadership transfer: `RaftNode.transferLeadership` brings a voter up to date and tells it to
+  campaign at once with `TimeoutNow`; its vote requests are marked so voters let them past the leader
+  lease. Proposals and configuration changes are refused while the transfer is under way, and a
+  transfer that has not completed within an election timeout is abandoned. A leader that has sent
+  `TimeoutNow` gives up its lease for the rest of its term, because a late `TimeoutNow` could
+  otherwise make a lease read stale; a test holds the message back to show it.
 - Membership changes in the consensus core, one server at a time: add a learner, promote it, remove a
   node. A configuration is a log entry and is in force from the moment it is appended, not when it
   commits; a follower that has an uncommitted configuration overwritten falls back to the one before

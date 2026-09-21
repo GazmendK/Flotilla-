@@ -56,6 +56,7 @@ class MessageCodecTest {
                 new AppendEntriesResponse(B, A, 3, false, 0, 5, 2, 17),
                 new AppendEntriesResponse(B, A, 3, true, 10, 0, 0, 0),
                 new RequestVoteRequest(A, B, 4, 10, 3, true),
+                new RequestVoteRequest(A, B, 5, 10, 3, false, true),
                 new RequestVoteResponse(B, A, 4, true, false),
                 new InstallSnapshotRequest(
                         A, B, 5, new Snapshot(100, 4, ClusterConfig.ofVoters(A, B), Bytes.ofUtf8("state"))),

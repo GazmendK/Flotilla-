@@ -63,7 +63,8 @@ public final class MessageCodec {
                 envelope.setRequestVoteRequest(dev.flotilla.wire.v1.RequestVoteRequest.newBuilder()
                         .setLastLogIndex(request.lastLogIndex())
                         .setLastLogTerm(request.lastLogTerm())
-                        .setPreVote(request.preVote()));
+                        .setPreVote(request.preVote())
+                        .setLeadershipTransfer(request.leadershipTransfer()));
             case RequestVoteResponse response ->
                 envelope.setRequestVoteResponse(dev.flotilla.wire.v1.RequestVoteResponse.newBuilder()
                         .setVoteGranted(response.voteGranted())
@@ -124,7 +125,13 @@ public final class MessageCodec {
                 case REQUEST_VOTE_REQUEST -> {
                     dev.flotilla.wire.v1.RequestVoteRequest body = envelope.getRequestVoteRequest();
                     yield new RequestVoteRequest(
-                            from, to, term, body.getLastLogIndex(), body.getLastLogTerm(), body.getPreVote());
+                            from,
+                            to,
+                            term,
+                            body.getLastLogIndex(),
+                            body.getLastLogTerm(),
+                            body.getPreVote(),
+                            body.getLeadershipTransfer());
                 }
                 case REQUEST_VOTE_RESPONSE -> {
                     dev.flotilla.wire.v1.RequestVoteResponse body = envelope.getRequestVoteResponse();

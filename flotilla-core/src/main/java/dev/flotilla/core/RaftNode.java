@@ -18,6 +18,7 @@ import dev.flotilla.core.port.LogStore;
 import dev.flotilla.core.port.RandomSource;
 import dev.flotilla.core.port.SnapshotStore;
 import dev.flotilla.core.state.Candidate;
+import dev.flotilla.core.state.CatchUpTracker;
 import dev.flotilla.core.state.Follower;
 import dev.flotilla.core.state.Leader;
 import dev.flotilla.core.state.Progress;
@@ -160,6 +161,10 @@ public final class RaftNode {
             return new ConfChangeResult.Rejected("This leader has not committed an entry of its own term yet. "
                     + "Changing the configuration before that can produce two leaders with disjoint majorities.");
         }
+        if (leader.transferee() != null) {
+            return new ConfChangeResult.Rejected("Leadership is being handed to " + leader.transferee()
+                    + "; configuration changes wait until that has finished.");
+        }
         if (configIndex > commitIndex) {
             return new ConfChangeResult.Rejected("The configuration change at index " + configIndex
                     + " is not committed yet; only one change may be in flight at a time.");
@@ -182,12 +187,13 @@ public final class RaftNode {
 
     private Optional<String> reasonAgainst(ConfChange change, ClusterConfig next, Leader leader) {
         if (change instanceof ConfChange.Promote promote) {
-            Progress progress = leader.progressFor(promote.node());
-            long match = progress == null ? 0 : progress.matchIndex();
-            if (match < commitIndex) {
-                return Optional.of(promote.node() + " has replicated through index " + match
-                        + " but the cluster has committed through " + commitIndex
-                        + ". Promoting a learner that has not caught up lowers availability until it does.");
+            Optional<CatchUpStatus> status = catchUpStatus(promote.node());
+            if (status.isEmpty() || !status.get().caughtUp()) {
+                return Optional.of(promote.node() + " has not caught up: "
+                        + status.map(RaftNode::describe).orElse("it is not being replicated to as a learner")
+                        + ". Promotion needs a replication round that finishes within an election timeout ("
+                        + config.electionTimeoutMinTicks() + " ticks), so that a new voter does not lower "
+                        + "availability while it catches up.");
             }
         }
         int reachable = 0;
@@ -202,6 +208,86 @@ public final class RaftNode {
                     + "The cluster would stop making progress.");
         }
         return Optional.empty();
+    }
+
+    @RaftSpec(value = "§4.2.1 Catching up new servers", source = RaftSpec.Source.DISSERTATION)
+    public Optional<CatchUpStatus> catchUpStatus(NodeId learner) {
+        if (!(state instanceof Leader leader)) {
+            return Optional.empty();
+        }
+        CatchUpTracker tracker = leader.catchUpOf(learner);
+        Progress progress = leader.progressFor(learner);
+        if (tracker == null || progress == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new CatchUpStatus(
+                tracker.completedRounds(),
+                tracker.lastRoundTicks(),
+                tracker.currentRoundTicks(leader.ticks()),
+                progress.matchIndex(),
+                tracker.isCaughtUp(config.electionTimeoutMinTicks(), leader.ticks())));
+    }
+
+    private static String describe(CatchUpStatus status) {
+        return status.completedRounds() == 0
+                ? "it has not completed a single replication round yet"
+                : "its last replication round took " + status.lastRoundTicks() + " ticks and the current one "
+                        + status.currentRoundTicks() + ", after " + status.completedRounds() + " rounds";
+    }
+
+    @RaftSpec(value = "§3.10 Leadership transfer extension", source = RaftSpec.Source.DISSERTATION)
+    public TransferResult transferLeadership(NodeId target) {
+        Objects.requireNonNull(target, "target");
+        if (!(state instanceof Leader leader)) {
+            return new TransferResult.Rejected("Only the leader can hand over leadership");
+        }
+        if (target.equals(id())) {
+            return new TransferResult.Rejected(target + " already leads");
+        }
+        if (!cluster.isVoter(target)) {
+            return new TransferResult.Rejected(target + " is not a voter and cannot lead");
+        }
+        if (leader.transferee() != null) {
+            return new TransferResult.Rejected("Leadership is already being handed to " + leader.transferee());
+        }
+        leader.beginTransfer(target);
+        Progress progress = leader.progressFor(target);
+        if (progress != null) {
+            if (progress.matchIndex() >= log.lastIndex()) {
+                sendTimeoutNow(leader, target);
+            } else {
+                replicateTo(target, progress);
+            }
+        }
+        return new TransferResult.Started(target);
+    }
+
+    public Optional<NodeId> transferee() {
+        return state instanceof Leader leader ? Optional.ofNullable(leader.transferee()) : Optional.empty();
+    }
+
+    private void continueTransfer(Leader leader, NodeId peer, Progress progress) {
+        if (peer.equals(leader.transferee()) && progress.matchIndex() >= log.lastIndex()) {
+            sendTimeoutNow(leader, peer);
+        }
+    }
+
+    private void sendTimeoutNow(Leader leader, NodeId target) {
+        leader.forfeitLease();
+        send(new TimeoutNowRequest(id(), target, currentTerm));
+    }
+
+    private void abandonTransferThatTookTooLong(Leader leader) {
+        if (leader.transferee() != null && leader.ticksSinceTransferBegan() >= config.electionTimeoutMinTicks()) {
+            leader.endTransfer();
+        }
+    }
+
+    @RaftSpec(value = "§3.10 Leadership transfer extension", source = RaftSpec.Source.DISSERTATION)
+    private void handleTimeoutNow(TimeoutNowRequest request) {
+        if (state instanceof Follower && request.from().equals(leaderId())) {
+            startElection(false, true);
+        }
     }
 
     private void recomputeConfiguration() {
@@ -235,6 +321,11 @@ public final class RaftNode {
             if (!member.equals(id()) && leader.progressFor(member) == null) {
                 leader.trackPeer(member, log.lastIndex() + 1);
             }
+            if (cluster.isLearner(member)) {
+                leader.trackCatchUp(member, log.lastIndex());
+            } else {
+                leader.forgetCatchUp(member);
+            }
         }
         for (NodeId tracked : List.copyOf(leader.peers().keySet())) {
             if (!cluster.contains(tracked)) {
@@ -245,7 +336,7 @@ public final class RaftNode {
 
     public boolean propose(Bytes command) {
         Objects.requireNonNull(command, "command");
-        if (!(state instanceof Leader)) {
+        if (!(state instanceof Leader leader) || leader.transferee() != null) {
             return false;
         }
         appendToOwnLog(List.of(LogEntry.normal(currentTerm, log.lastIndex() + 1, command)));
@@ -290,6 +381,9 @@ public final class RaftNode {
     }
 
     private boolean holdsLease(Leader leader) {
+        if (leader.hasForfeitedLease()) {
+            return false;
+        }
         long confirmed = leader.quorumAckedRound(cluster.voters(), id(), cluster.quorum());
         return leader.ticksSinceRoundWasSent(confirmed) < config.leaseTicks();
     }
@@ -408,7 +502,9 @@ public final class RaftNode {
             throw new IllegalArgumentException("Message addressed to " + message.to() + " was delivered to " + id());
         }
 
-        if (message instanceof RequestVoteRequest vote && isWithinLeaderLease(vote.from())) {
+        if (message instanceof RequestVoteRequest vote
+                && !vote.leadershipTransfer()
+                && isWithinLeaderLease(vote.from())) {
             return;
         }
 
@@ -428,7 +524,7 @@ public final class RaftNode {
             case AppendEntriesResponse response -> handleAppendEntriesResponse(response);
             case InstallSnapshotRequest request -> handleInstallSnapshot(request);
             case InstallSnapshotResponse response -> handleInstallSnapshotResponse(response);
-            case TimeoutNowRequest ignored -> {}
+            case TimeoutNowRequest request -> handleTimeoutNow(request);
             case ReadIndexRequest request -> handleReadIndexRequest(request);
             case ReadIndexResponse response -> handleReadIndexResponse(response);
         }
@@ -475,6 +571,7 @@ public final class RaftNode {
         heartbeatElapsedTicks++;
         electionTimer.tick();
         resendSnapshotsThatWentUnanswered(leader);
+        abandonTransferThatTookTooLong(leader);
 
         if (heartbeatElapsedTicks >= config.heartbeatTicks()) {
             heartbeatElapsedTicks = 0;
@@ -505,6 +602,10 @@ public final class RaftNode {
 
     @RaftSpec("§5.2 Leader election")
     private void startElection(boolean preVote) {
+        startElection(preVote, false);
+    }
+
+    private void startElection(boolean preVote, boolean transfer) {
         if (!cluster.isVoter(id())) {
             return;
         }
@@ -529,7 +630,8 @@ public final class RaftNode {
             if (peer.equals(id())) {
                 continue;
             }
-            send(new RequestVoteRequest(id(), peer, campaignTerm, log.lastIndex(), lastLogTerm(), preVote));
+            send(new RequestVoteRequest(
+                    id(), peer, campaignTerm, log.lastIndex(), lastLogTerm(), preVote, transfer && !preVote));
         }
     }
 
@@ -701,6 +803,7 @@ public final class RaftNode {
         if (response.success()) {
             boolean advanced = progress.maybeUpdate(response.matchIndex());
             leaveSnapshotStateIfCaughtUp(progress);
+            observeCatchUp(leader, response.from(), progress);
             if (progress.state() == ProgressState.PROBE) {
                 progress.becomeReplicate();
             }
@@ -727,6 +830,7 @@ public final class RaftNode {
         progress.recordReply();
 
         boolean advanced = progress.maybeUpdate(response.matchIndex());
+        observeCatchUp(leader, response.from(), progress);
         if (progress.state() == ProgressState.SNAPSHOT) {
             long pending = progress.pendingSnapshotIndex();
             progress.becomeProbe();
@@ -740,6 +844,14 @@ public final class RaftNode {
             maybeAdvanceLeaderCommit(leader);
         }
         replicateTo(response.from(), progress);
+    }
+
+    private void observeCatchUp(Leader leader, NodeId peer, Progress progress) {
+        CatchUpTracker tracker = leader.catchUpOf(peer);
+        if (tracker != null) {
+            tracker.observe(progress.matchIndex(), log.lastIndex(), leader.ticks());
+        }
+        continueTransfer(leader, peer, progress);
     }
 
     private static void leaveSnapshotStateIfCaughtUp(Progress progress) {
@@ -816,12 +928,8 @@ public final class RaftNode {
     private void becomeLeader() {
         Leader leader = new Leader();
         leader.markActive(id());
-        for (NodeId peer : cluster.allMembers()) {
-            if (!peer.equals(id())) {
-                leader.trackPeer(peer, log.lastIndex() + 1);
-            }
-        }
         state = leader;
+        trackMembers(leader);
         electionTimer.reset();
         heartbeatElapsedTicks = 0;
 

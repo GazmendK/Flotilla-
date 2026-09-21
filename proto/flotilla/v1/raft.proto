@@ -65,6 +65,8 @@ message RequestVoteRequest {
   int64 last_log_index = 1;
   int64 last_log_term = 2;
   bool pre_vote = 3;
+  // Sent by the target of a leadership transfer; followers vote even though they heard from a leader recently.
+  bool leadership_transfer = 4;
 }
 
 message RequestVoteResponse {
