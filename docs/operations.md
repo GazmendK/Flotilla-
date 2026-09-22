@@ -146,6 +146,7 @@ Rolling restarts need no membership change:
 | "only N of them have been heard from recently" | the change would leave no reachable majority | bring the unreachable voters back, or remove the one that is down first |
 | "not committed an entry of its own term", "only one change may be in flight", "being handed to" | a condition that clears itself | nothing — the leader waits for it before answering |
 | "at least one voter" | the last voter cannot be removed | add another voter first |
+| "did not take over within an election timeout" | a handover was abandoned; the old leader kept leading and takes writes again | try again, or hand over to a voter that is less busy |
 
 ## How large do snapshots get?
 

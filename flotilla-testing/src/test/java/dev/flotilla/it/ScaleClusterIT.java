@@ -152,6 +152,21 @@ class ScaleClusterIT {
         stop(removed);
     }
 
+    private static NodeId handOver(FlotillaAdmin admin, NodeId target) {
+        FlotillaClientException last = null;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            try {
+                return admin.transferLeadership(target);
+            } catch (FlotillaClientException notInTime) {
+                last = notInTime;
+                if (admin.describe().knownLeader().filter(target::equals).isPresent()) {
+                    return target;
+                }
+            }
+        }
+        throw new AssertionError("leadership never reached " + target, last);
+    }
+
     private static ClusterConfig promote(FlotillaAdmin admin, NodeId learner) {
         FlotillaAdmin.CatchUpReport report = admin.awaitCaughtUp(learner, PATIENCE);
         assertThat(report.caughtUp())
@@ -194,7 +209,7 @@ class ScaleClusterIT {
             Thread.sleep(1_000);
 
             if (!admin.describe().knownLeader().orElseThrow().equals(N1)) {
-                steps.add(elapsed() + " handed leadership to " + admin.transferLeadership(N1));
+                steps.add(elapsed() + " handed leadership to " + handOver(admin, N1));
             }
             Thread.sleep(1_000);
 
