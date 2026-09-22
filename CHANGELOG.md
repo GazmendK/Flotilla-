@@ -245,6 +245,11 @@ not stable before 1.0.0.
   `RealClusterLinearizabilityIT` required a hundred writes from a fixed schedule that a slow Windows
   runner could not fill; the real-cluster tests now keep their clients running until enough
   operations have completed.
+- The real-cluster tests failed on busy CI runners with "not the leader", before this phase as well:
+  with 20 ms ticks an election timeout is 200 ms, and a runner that stalls a thread that long holds
+  an election nobody asked for. They now tick every 50 ms, the production default, run after the
+  other modules' tests instead of beside them, and a test that writes through the leader looks for
+  the leader again when it has moved.
 - A snapshot taken after a membership change recorded the configuration the node had been started
   with, so a node restarted from it came back with its original members. The apply loop now tracks
   the configuration it has applied, and snapshots record that.

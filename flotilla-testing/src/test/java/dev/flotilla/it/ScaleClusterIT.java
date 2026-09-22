@@ -55,7 +55,7 @@ class ScaleClusterIT {
     private static final NodeId N4 = NodeId.of("n4");
     private static final NodeId N5 = NodeId.of("n5");
     private static final ClusterConfig INITIAL = ClusterConfig.ofVoters(N1, N2, N3);
-    private static final Duration TICK = Duration.ofMillis(20);
+    private static final Duration TICK = Duration.ofMillis(50);
     private static final Duration PATIENCE = Duration.ofSeconds(30);
     private static final int CLIENTS = 4;
     private static final int KEYS = 6;

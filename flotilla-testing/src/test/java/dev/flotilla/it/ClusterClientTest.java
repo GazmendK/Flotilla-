@@ -38,7 +38,7 @@ import org.junit.jupiter.api.io.TempDir;
 class ClusterClientTest {
 
     private static final List<NodeId> IDS = List.of(NodeId.of("n1"), NodeId.of("n2"), NodeId.of("n3"));
-    private static final Duration TICK = Duration.ofMillis(20);
+    private static final Duration TICK = Duration.ofMillis(50);
     private static final Duration PATIENCE = Duration.ofSeconds(30);
     private static final ClientConfig CLIENT = ClientConfig.defaults()
             .withAttemptDeadline(Duration.ofSeconds(1))

@@ -48,7 +48,7 @@ import org.junit.jupiter.api.io.TempDir;
 class RealClusterLinearizabilityIT {
 
     private static final List<NodeId> IDS = List.of(NodeId.of("n1"), NodeId.of("n2"), NodeId.of("n3"));
-    private static final Duration TICK = Duration.ofMillis(20);
+    private static final Duration TICK = Duration.ofMillis(50);
     private static final Duration PATIENCE = Duration.ofSeconds(30);
     private static final int CLIENTS = 4;
     private static final int FOLLOWER_READERS = 2;

@@ -15,6 +15,7 @@ import dev.flotilla.kv.CommandCodec;
 import dev.flotilla.kv.KvRequest;
 import dev.flotilla.kv.KvStateMachine;
 import dev.flotilla.server.FlotillaNode;
+import dev.flotilla.server.NotLeaderException;
 import dev.flotilla.server.ServerConfig;
 import dev.flotilla.storage.FsyncPolicy;
 import dev.flotilla.storage.StorageConfig;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,7 +40,7 @@ import org.junit.jupiter.api.io.TempDir;
 class ThreeNodeClusterTest {
 
     private static final List<NodeId> IDS = List.of(NodeId.of("n1"), NodeId.of("n2"), NodeId.of("n3"));
-    private static final Duration TICK = Duration.ofMillis(20);
+    private static final Duration TICK = Duration.ofMillis(50);
     private static final Duration PATIENCE = Duration.ofSeconds(30);
 
     @TempDir
@@ -111,10 +113,20 @@ class ThreeNodeClusterTest {
     }
 
     private long put(NodeId leader, String key, String value) throws Exception {
-        return node(leader)
-                .server()
-                .propose(CommandCodec.encode(KvRequest.anonymous(Command.put(key, value))))
-                .get(PATIENCE.toSeconds(), TimeUnit.SECONDS);
+        NodeId target = leader;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return node(target)
+                        .server()
+                        .propose(CommandCodec.encode(KvRequest.anonymous(Command.put(key, value))))
+                        .get(PATIENCE.toSeconds(), TimeUnit.SECONDS);
+            } catch (ExecutionException failed) {
+                if (!(failed.getCause() instanceof NotLeaderException) || attempt >= 10) {
+                    throw failed;
+                }
+                target = awaitLeader();
+            }
+        }
     }
 
     private void awaitAppliedEverywhere(long index) {

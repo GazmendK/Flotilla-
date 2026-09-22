@@ -40,7 +40,7 @@ import org.junit.jupiter.api.io.TempDir;
 class InstallSnapshotIT {
 
     private static final List<NodeId> IDS = List.of(NodeId.of("n1"), NodeId.of("n2"), NodeId.of("n3"));
-    private static final Duration TICK = Duration.ofMillis(20);
+    private static final Duration TICK = Duration.ofMillis(50);
     private static final Duration PATIENCE = Duration.ofSeconds(60);
     private static final int WRITES = 600;
     private static final int VALUE_BYTES = 2048;
