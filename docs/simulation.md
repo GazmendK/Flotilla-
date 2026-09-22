@@ -80,7 +80,7 @@ while the usual faults run it keeps changing the cluster: a random leader is ask
 a learner, promote a learner, remove any member — itself included — or hand leadership to another
 voter. Most requests are refused, for the reasons the core gives, and the refusal must say why.
 After every step, a leader that is not a voter in its own configuration must have an uncommitted
-change that removed it. When the faults stop, the cluster must elect a leader, commit its last
+change that removed it, or be handing over to a successor. When the faults stop, the cluster must elect a leader, commit its last
 configuration, and bring every voter to the same configuration and commit index. Each run makes
 twenty to forty accepted changes; one that makes fewer than five fails, so a pass cannot come from
 doing nothing. The default sixty seeds pass, and so did a thousand more run once.

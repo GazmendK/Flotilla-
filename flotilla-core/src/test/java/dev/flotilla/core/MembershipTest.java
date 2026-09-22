@@ -184,6 +184,55 @@ class MembershipTest {
     }
 
     @Test
+    @DisplayName("a leader that removes itself hands over at once instead of leaving the cluster leaderless")
+    void aRemovedLeaderHandsOver() {
+        TestCluster cluster = trioWithSpares();
+        NodeId leader = cluster.singleLeader();
+        cluster.propose(leader, "before");
+
+        change(cluster, leader, new ConfChange.Remove(leader));
+
+        assertThat(cluster.leaders())
+                .as("without a handover the others would wait out an election timeout, most of it inside the lease "
+                        + "they granted the node that just left")
+                .hasSize(1)
+                .doesNotContain(leader);
+        assertThat(cluster.propose(cluster.singleLeader(), "after")).isTrue();
+    }
+
+    @Test
+    @DisplayName("a removed leader whose successors are still behind stops taking writes and brings one up to date")
+    void aRemovedLeaderCatchesItsSuccessorUpFirst() {
+        TestCluster cluster = TestCluster.of(3, builder -> builder.maxEntriesPerAppend(1));
+        cluster.tick(100);
+        NodeId leader = cluster.singleLeader();
+        List<NodeId> successors = cluster.followers();
+        cluster.propose(leader, "before");
+        successors.forEach(cluster::isolate);
+        assertThat(cluster.node(leader)
+                        .proposeConfChange(new ConfChange.Remove(leader))
+                        .isAccepted())
+                .isTrue();
+        for (int i = 0; i < 5; i++) {
+            cluster.node(leader).propose(Bytes.ofUtf8("late " + i));
+        }
+
+        cluster.heal();
+        cluster.tick();
+
+        assertThat(cluster.leaders())
+                .as("the removal commits while both successors still miss the entries after it, one per append; "
+                        + "stepping down at that moment would leave nobody to lead for an election timeout")
+                .hasSize(1)
+                .doesNotContain(leader);
+        NodeId successor = cluster.singleLeader();
+        assertThat(cluster.appliedOf(successor).stream()
+                        .map(entry -> entry.data().toUtf8())
+                        .toList())
+                .contains("late 0", "late 4");
+    }
+
+    @Test
     @DisplayName("a leader deposed before its own removal commits still campaigns, or nobody could ever lead again")
     void aRemovedLeaderFinishesItsOwnRemoval() {
         TestCluster cluster = TestCluster.withMembers(ClusterConfig.ofVoters(N1, N2), List.of(N1, N2));

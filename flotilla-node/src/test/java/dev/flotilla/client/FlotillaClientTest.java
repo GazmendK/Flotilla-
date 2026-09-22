@@ -58,6 +58,23 @@ class FlotillaClientTest {
     }
 
     @Test
+    @DisplayName("a leader learned from a hint stays in rotation, so losing every seed does not lose the cluster")
+    void aLearnedLeaderOutlivesTheSeeds() {
+        FakeCluster cluster = new FakeCluster(C, KvStateMachine.DEFAULT_SESSION_TIMEOUT_ENTRIES);
+
+        try (FlotillaClient client = client(cluster, List.of(A))) {
+            client.put(b("k"), b("before"));
+            cluster.down.add(A);
+            cluster.unavailableNext = 1;
+
+            client.put(b("k"), b("after"));
+
+            assertThat(client.knownNodes()).containsExactly(A, C);
+            assertThat(client.get(b("k"))).contains(b("after"));
+        }
+    }
+
+    @Test
     @DisplayName("without a hint the client moves on to the next node and backs off")
     void withoutAHintTheClientRotates() {
         FakeCluster cluster = new FakeCluster(C, KvStateMachine.DEFAULT_SESSION_TIMEOUT_ENTRIES);

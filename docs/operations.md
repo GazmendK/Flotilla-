@@ -1,7 +1,7 @@
 # Operations
 
-What an operator has to know to run Flotilla, back it up, and get it back after something went
-wrong. Everything here is checked against the code; if the two disagree, the code is right and this
+What an operator has to know to run Flotilla, change its members, back it up, and get it back
+after something went wrong. Everything here is checked against the code; if the two disagree, the code is right and this
 page is a bug.
 
 ## The data directory
@@ -47,11 +47,10 @@ them: three copies of the same committed state cost three times the space and pr
 survived. It catches up from the leader — from the log if the entries still exist, from a streamed
 snapshot if they do not, which is the path `InstallSnapshotIT` exercises.
 
-If the directory itself is gone, starting the node empty under its old id works, but it is not
-strictly safe, and this page will not pretend otherwise. A node that loses its disk also loses the
-vote it cast in the current term, and in a narrow window it could vote a second time. PreVote and
-the leader lease make that window small; the safe procedure is removing the member and adding it
-back, which needs membership changes and arrives in Phase 12.
+If the directory itself is gone, do not start the node empty under its old id. A node that loses
+its disk also loses the vote it cast in the current term, and in a narrow window it could vote a
+second time. PreVote and the leader lease make that window small, not empty. The safe procedure is
+[replacing the node](#replace-a-node): remove the old id, and add the machine back under a new one.
 
 **Quorum lost.** Restore from a backup:
 
@@ -66,6 +65,87 @@ safe here precisely because every node that could remember a vote in that term h
 Never copy a backup onto a *different* node: the hard state holds the original node's vote.
 
 This loses every entry committed after the backup was taken. A backup is a point in time.
+
+## Changing the members
+
+Members are changed one at a time, through the leader, with `FlotillaAdmin`. Every call finds the
+leader on its own, so any node will do as a starting point. The `flotillactl` commands arriving in
+Phase 14 wrap exactly these calls.
+
+```java
+try (FlotillaAdmin admin = FlotillaAdmin.connect(List.of(anyNode), ClientConfig.defaults())) {
+    System.out.println(admin.describe());
+}
+```
+
+`describe()` asks the leader and shows the configuration, whether it has committed, the leader's
+commit and applied index, and for every learner how its catch-up rounds are going. `describe(node)`
+asks one particular node for its own view. The answers to "is it safe yet?" below all come from it.
+
+A new node must be resolvable by the leader's `PeerDirectory` before it is added: the configuration
+names nodes, not machines, and a leader that cannot reach a learner cannot catch it up. The request
+is refused if it cannot.
+
+### Add a node
+
+1. Start the new node with the current members as its initial configuration. It is not a member yet,
+   so it waits: it neither votes nor campaigns.
+2. Add it as a learner: `admin.addLearner(n4)`. It is replicated to from now on and counts for
+   nothing.
+3. Wait until it has caught up: `admin.awaitCaughtUp(n4, Duration.ofMinutes(5))`. A learner counts as
+   caught up once a replication round — everything the leader had when the round began — finished
+   within an election timeout, and the current round has not already taken longer.
+4. Promote it: `admin.promote(n4)`. The quorum grows the moment the leader appends the change.
+
+Skipping the learner stage is not possible, on purpose. A voter that joins empty raises the quorum
+before it can contribute to it: a three-node cluster that becomes four with the new node still
+catching up tolerates no failure at all until it has.
+
+### Remove a node
+
+1. If the node leads, hand leadership away first: `admin.transferLeadership(n2)`. Not required — a
+   leader that removes itself hands over on its own — but a planned handover costs nothing.
+2. Remove it: `admin.remove(n1)`. The call answers once the removal has committed.
+3. Wait until `describe()` names some other node as leader, then stop the removed node. A removed
+   leader is still handing over for a moment after the call returns; stopping it then brings back a
+   full election timeout without a leader.
+4. Delete its data directory. It must never rejoin under the same id with that state.
+
+The request is refused if the voters that would remain, and that the leader has heard from within an
+election timeout, would not form a majority of the new configuration. Removing the node that is
+actually down is fine; removing a healthy one while another is down would stop the cluster, and the
+refusal says so with the numbers.
+
+### Replace a node
+
+For a node whose disk is gone, or a machine being swapped:
+
+1. [Add](#add-a-node) the new machine under a **new** id and promote it.
+2. [Remove](#remove-a-node) the old id.
+
+Adding before removing keeps the cluster's fault tolerance during the swap. In a three-node cluster
+with the old node dead, the order matters even more: removing first leaves two voters, a quorum of
+two, and no room for another failure while the replacement catches up.
+
+### Take a node down for maintenance
+
+Rolling restarts need no membership change:
+
+1. If the node leads, `admin.transferLeadership(other)`. The target is brought up to date and told to
+   campaign at once; the call answers when it leads. Writes are refused for the moment it takes.
+2. Stop the node, do the work, start it again on its data directory. It catches up from the log or a
+   snapshot.
+3. Wait until it has caught up before taking down the next one: `admin.describe(node).appliedIndex()`
+   has reached the `commitIndex()` the leader reported when the node came back.
+
+### When a change is refused
+
+| Refusal | What it means | What to do |
+|---|---|---|
+| "has not caught up" | the learner's last round took longer than an election timeout, or the current one already has | wait; the leader retries for three election timeouts, then call `awaitCaughtUp` |
+| "only N of them have been heard from recently" | the change would leave no reachable majority | bring the unreachable voters back, or remove the one that is down first |
+| "not committed an entry of its own term", "only one change may be in flight", "being handed to" | a condition that clears itself | nothing — the leader waits for it before answering |
+| "at least one voter" | the last voter cannot be removed | add another voter first |
 
 ## How large do snapshots get?
 

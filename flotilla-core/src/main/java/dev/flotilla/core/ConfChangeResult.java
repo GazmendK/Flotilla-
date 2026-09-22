@@ -14,9 +14,13 @@ public sealed interface ConfChangeResult {
         }
     }
 
-    record Rejected(String reason) implements ConfChangeResult {
+    record Rejected(String reason, boolean temporary) implements ConfChangeResult {
         public Rejected {
             Objects.requireNonNull(reason, "reason");
+        }
+
+        public Rejected(String reason) {
+            this(reason, false);
         }
     }
 

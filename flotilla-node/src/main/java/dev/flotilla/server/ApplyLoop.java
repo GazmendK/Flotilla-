@@ -5,6 +5,8 @@
 package dev.flotilla.server;
 
 import dev.flotilla.core.Bytes;
+import dev.flotilla.core.ClusterConfig;
+import dev.flotilla.core.ClusterConfigCodec;
 import dev.flotilla.core.EntryType;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.Snapshot;
@@ -35,6 +37,7 @@ final class ApplyLoop implements Runnable {
     private volatile boolean running = true;
     private volatile long appliedIndex;
     private volatile SnapshotTrigger trigger = SnapshotTrigger.none();
+    private volatile ClusterConfig configuration;
 
     @Nullable
     private volatile RuntimeException failure;
@@ -47,10 +50,11 @@ final class ApplyLoop implements Runnable {
 
     private final PriorityQueue<Query> parked = new PriorityQueue<>(Comparator.comparingLong(Query::readIndex));
 
-    ApplyLoop(StateMachine stateMachine, ProposalRegistry proposals, int capacity) {
+    ApplyLoop(StateMachine stateMachine, ProposalRegistry proposals, int capacity, ClusterConfig configuration) {
         this.stateMachine = Objects.requireNonNull(stateMachine, "stateMachine");
         this.proposals = Objects.requireNonNull(proposals, "proposals");
         this.pending = new ArrayBlockingQueue<>(capacity);
+        this.configuration = Objects.requireNonNull(configuration, "configuration");
     }
 
     void onApplied(SnapshotTrigger listener) {
@@ -60,6 +64,7 @@ final class ApplyLoop implements Runnable {
     void restoreFrom(Snapshot snapshot) {
         stateMachine.restore(snapshot.data());
         appliedIndex = snapshot.lastIncludedIndex();
+        configuration = snapshot.cluster();
         restores.incrementAndGet();
     }
 
@@ -68,6 +73,8 @@ final class ApplyLoop implements Runnable {
             Optional<LogEntry> entry = log.entryAt(index);
             if (entry.isPresent() && entry.get().type() == EntryType.NORMAL) {
                 stateMachine.apply(index, entry.get().data());
+            } else if (entry.isPresent() && entry.get().type() == EntryType.CONFIGURATION) {
+                configuration = ClusterConfigCodec.decode(entry.get().data());
             }
         }
         appliedIndex = Math.max(appliedIndex, throughIndex);
@@ -127,6 +134,10 @@ final class ApplyLoop implements Runnable {
         return appliedIndex;
     }
 
+    ClusterConfig appliedConfiguration() {
+        return configuration;
+    }
+
     long backlog() {
         return backlog.get();
     }
@@ -181,6 +192,9 @@ final class ApplyLoop implements Runnable {
                 Bytes response = entry.type() == EntryType.NORMAL
                         ? stateMachine.apply(entry.index(), entry.data())
                         : Bytes.EMPTY;
+                if (entry.type() == EntryType.CONFIGURATION) {
+                    configuration = ClusterConfigCodec.decode(entry.data());
+                }
                 appliedIndex = entry.index();
                 bytes += entry.data().size();
                 lastTerm = entry.term();
@@ -189,7 +203,7 @@ final class ApplyLoop implements Runnable {
         }
         backlog.addAndGet(-batch.size());
         if (lastTerm > 0) {
-            trigger.afterApply(appliedIndex, lastTerm, bytes);
+            trigger.afterApply(appliedIndex, lastTerm, configuration, bytes);
         }
     }
 }

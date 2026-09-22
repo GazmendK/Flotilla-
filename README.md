@@ -13,10 +13,11 @@
 
 ---
 
-> **Status: Phase 9 of 15 done — a distributed cluster.**
-> Nodes elect a leader and replicate over gRPC, and a client library finds the leader, retries
-> through failover without ever running a command twice, and records a history of every operation
-> for the linearizability checker in Phase 11. Snapshots and log compaction are Phase 10.
+> **Status: Phase 12 of 15 done — a cluster that changes its members while it runs.**
+> Nodes replicate over gRPC, compact their logs into snapshots and stream them to followers that
+> fall behind, and answer linearizable reads without writing to the log. Members are added as
+> learners, promoted once they keep up, and removed — the leader included — while clients keep
+> working, and every client history is checked for linearizability. Metrics and tracing are next.
 > See [`ROADMAP.md`](ROADMAP.md) for the full plan.
 
 ## Why this exists
@@ -59,6 +60,7 @@ This section is the point of the project. It will fill in as the phases land:
 | ☑ | Fault injection proving the checkers actually detect known-bad behaviour | 5 |
 | ☑ | Crash-consistency verified by injecting a crash at every write, sync, delete and directory sync | 6 |
 | ☑ | A linearizability checker of its own, checked against brute force, run over simulated and real cluster histories | 11 |
+| ☑ | Membership churn under crashes and partitions in simulation, and a real cluster grown from three to five and back under load | 12 |
 | ☑ | Every safeguard tested with itself disabled, so it is known to fail without it | 3 |
 | ☑ | Determinism enforced as tests: the core cannot acquire I/O, threads, a clock or unseeded randomness | 2 |
 | ☑ | Static analysis as build failures: Error Prone, NullAway, `-Werror` | 1 |
@@ -128,14 +130,14 @@ exercises is the shipped consensus code, not a model of it.
 
 | Phase | | Phase | |
 |---|---|---|---|
-| 1. Foundation | ☑ | 9. gRPC transport, real cluster | ☐ |
-| 2. Domain model and ports | ☑ | 10. Snapshots and compaction | ☐ |
-| 3. Leader election | ☑ | 11. Linearizable reads and checker | ☐ |
-| 4. Log replication | ☑ | 12. Membership changes | ☐ |
+| 1. Foundation | ☑ | 9. gRPC transport, real cluster | ☑ |
+| 2. Domain model and ports | ☑ | 10. Snapshots and compaction | ☑ |
+| 3. Leader election | ☑ | 11. Linearizable reads and checker | ☑ |
+| 4. Log replication | ☑ | 12. Membership changes | ☑ |
 | 5. Deterministic simulation | ☑ | 13. Observability and visualizer | ☐ |
 | 6. Persistence and recovery | ☑ | 14. CLI, packaging, demo | ☐ |
-| 7. Node runtime | ☐ | 15. Benchmarks and release | ☐ |
-| 8. KV state machine, sessions | ☐ | | |
+| 7. Node runtime | ☑ | 15. Benchmarks and release | ☐ |
+| 8. KV state machine, sessions | ☑ | | |
 
 ## Non-goals
 
@@ -158,11 +160,11 @@ Stated up front, because a bounded scope is a design decision:
 | [`docs/simulation.md`](docs/simulation.md) | How the simulation works, how to replay a seed, and what it provably does *not* catch |
 | [`docs/storage-format.md`](docs/storage-format.md) | The on-disk format, byte for byte, with a hexdump generated from the code |
 | [`docs/threading-model.md`](docs/threading-model.md) | Which work runs on which thread, every queue overflow policy, and the measured group commit numbers |
-| [`docs/wire-protocol.md`](docs/wire-protocol.md) | Both RPCs, delivery semantics, the error model, and sequence diagrams for election, replication and a request surviving a leader change |
+| [`docs/wire-protocol.md`](docs/wire-protocol.md) | Every RPC, delivery semantics, the error model, and sequence diagrams for election, replication and a request surviving a leader change |
 | [`docs/consistency-model.md`](docs/consistency-model.md) | What the system guarantees, what it does not, and where each boundary is drawn on purpose |
 | [`docs/linearizability.md`](docs/linearizability.md) | What linearizability means, how the checker searches for it, and how the checker itself is checked |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | The layers, and the rule that every safeguard is tested with itself disabled |
-| [`docs/operations.md`](docs/operations.md) | Backup and restore, how large snapshots get, what to watch, and what to do when it goes wrong |
+| [`docs/operations.md`](docs/operations.md) | Adding, removing and replacing nodes, backup and restore, what to watch, and what to do when it goes wrong |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — every non-obvious choice, and what it cost |
 | [`ROADMAP.md`](ROADMAP.md) | The 15 development phases, and why they are ordered that way |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, and what "done" means here |

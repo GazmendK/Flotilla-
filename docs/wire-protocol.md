@@ -169,6 +169,7 @@ nothing to deduplicate.
 | `RESOURCE_EXHAUSTED` | the node's event queue is full | yes, same node, with backoff |
 | `DEADLINE_EXCEEDED` | no answer in time; the command may have run | yes, same sequence |
 | `INVALID_ARGUMENT` | the command cannot be decoded | no |
+| `FAILED_PRECONDITION` | an administrative change was refused; the description says why | no, not unchanged |
 
 A rejected session is not a status code. It is a result, `Rejected(UNKNOWN_SESSION)` or
 `Rejected(STALE_SEQUENCE)`, returned by the state machine like any other answer.
@@ -199,6 +200,26 @@ sequenceDiagram
 
 Without the session the retry would have executed again, found the lock taken — by itself — and
 answered `Swapped(false)`.
+
+## Administration
+
+`AdminService` changes who is in the cluster and who leads it. It is served on the same port as the
+client service and follows the same redirect rule: a call that must reach the leader is answered
+anywhere else with `UNAVAILABLE` and the leader in the trailers.
+
+| RPC | Answers when | Refused with `FAILED_PRECONDITION` when |
+|---|---|---|
+| `ChangeMembership` — `add_learner`, `promote` or `remove` | the new configuration has committed and been applied on the leader | the change is impossible, or a temporary condition has not cleared within three election timeouts |
+| `TransferLeadership` | the target is known to lead | the target is not a voter, or has not taken over within an election timeout |
+| `DescribeCluster` | at once, from the answering node's view; with `leader_only`, only on the leader | never |
+
+The description of a `FAILED_PRECONDITION` is the consensus core's reason, word for word — for
+example which learner has not caught up and how long its last replication round took. It is meant
+to be shown to an operator unchanged.
+
+A change that times out may or may not have been made. `FlotillaAdmin` reports it as indeterminate
+rather than retrying, because a retried removal that did happen is refused as "not a member" and
+would look like a failure. `DescribeCluster` tells which it was.
 
 ## Compatibility rules
 

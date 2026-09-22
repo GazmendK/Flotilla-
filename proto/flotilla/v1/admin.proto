@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package flotilla.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "AdminProto";
+option java_package = "dev.flotilla.wire.v1";
+
+// Changes who is in the cluster and who leads it. Every call must reach the
+// leader; any other node answers UNAVAILABLE with the leader in the trailers,
+// exactly as the client service does.
+service AdminService {
+  // Answers once the new configuration has committed and been applied.
+  rpc ChangeMembership(ChangeMembershipRequest) returns (ChangeMembershipResponse);
+  // Answers once the target is known to lead.
+  rpc TransferLeadership(TransferLeadershipRequest) returns (TransferLeadershipResponse);
+  // Answered by any node from its own view, or only by the leader.
+  rpc DescribeCluster(DescribeClusterRequest) returns (DescribeClusterResponse);
+}
+
+message ChangeMembershipRequest {
+  // One server per change: a learner is added, a learner becomes a voter, or
+  // a member of either kind leaves.
+  oneof change {
+    string add_learner = 1;
+    string promote = 2;
+    string remove = 3;
+  }
+}
+
+message Configuration {
+  repeated string voters = 1;
+  repeated string learners = 2;
+}
+
+message ChangeMembershipResponse {
+  Configuration configuration = 1;
+}
+
+message TransferLeadershipRequest {
+  string target = 1;
+}
+
+message TransferLeadershipResponse {
+  string leader = 1;
+}
+
+message DescribeClusterRequest {
+  // When set, a node that does not lead answers UNAVAILABLE with the leader
+  // in the trailers instead of describing its own view.
+  bool leader_only = 1;
+}
+
+message CatchUp {
+  string node = 1;
+  int32 completed_rounds = 2;
+  // Ticks the last completed round took; the largest int64 before the first.
+  int64 last_round_ticks = 3;
+  int64 current_round_ticks = 4;
+  int64 match_index = 5;
+  bool caught_up = 6;
+}
+
+message DescribeClusterResponse {
+  // The node that answered.
+  string node = 1;
+  // Empty when the answering node knows no leader.
+  string leader = 2;
+  int64 term = 3;
+  Configuration configuration = 4;
+  int64 configuration_index = 5;
+  bool configuration_committed = 6;
+  // Only a leader tracks learners, so only a leader fills this in.
+  repeated CatchUp catch_up = 7;
+  // How far the answering node has committed and applied.
+  int64 commit_index = 8;
+  int64 applied_index = 9;
+}

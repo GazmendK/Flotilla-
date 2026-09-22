@@ -18,7 +18,8 @@ public final class CallFailure extends RuntimeException {
         OVERLOADED,
         UNAVAILABLE,
         TIMED_OUT,
-        INVALID
+        INVALID,
+        REJECTED
     }
 
     private final Kind kind;

@@ -24,7 +24,7 @@ phase inherits fault injection and invariant checking for free.
 | 9 | gRPC transport, client library, real multi-process cluster | **done** |
 | 10 | Snapshotting, log compaction, streamed InstallSnapshot | done |
 | 11 | Linearizable reads (ReadIndex, lease, follower) and a linearizability checker | done |
-| 12 | Membership changes with learners, and leader transfer | in progress |
+| 12 | Membership changes with learners, and leader transfer | done |
 | 13 | Metrics, structured logging, live cluster visualization | planned |
 | 14 | CLI, layered configuration, container images, chaos demo | planned |
 | 15 | Benchmarks, performance analysis, `v1.0.0` | planned |

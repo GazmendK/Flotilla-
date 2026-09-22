@@ -17,6 +17,7 @@ import dev.flotilla.transport.ReadConsistency;
 import dev.flotilla.transport.grpc.GrpcClientEndpoint;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -28,7 +29,7 @@ import org.jspecify.annotations.Nullable;
 public final class FlotillaClient implements AutoCloseable {
 
     private final ClientEndpoint endpoint;
-    private final List<InetSocketAddress> seeds;
+    private final List<InetSocketAddress> known;
     private final ClientConfig config;
     private final RandomGenerator random;
     private final Sleeper sleeper;
@@ -48,15 +49,15 @@ public final class FlotillaClient implements AutoCloseable {
             Sleeper sleeper,
             HistoryRecorder history) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
-        this.seeds = List.copyOf(Objects.requireNonNull(seeds, "seeds"));
+        this.known = new ArrayList<>(Objects.requireNonNull(seeds, "seeds"));
         this.config = Objects.requireNonNull(config, "config");
         this.random = Objects.requireNonNull(random, "random");
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
         this.history = Objects.requireNonNull(history, "history");
-        if (this.seeds.isEmpty()) {
+        if (this.known.isEmpty()) {
             throw new IllegalArgumentException("A client needs at least one node to start from");
         }
-        this.target = this.seeds.getFirst();
+        this.target = this.known.getFirst();
         this.process = history.newProcess();
     }
 
@@ -257,19 +258,26 @@ public final class FlotillaClient implements AutoCloseable {
                 Optional<InetSocketAddress> hint = failure.leaderAddress();
                 if (hint.isPresent() && !hint.get().equals(target)) {
                     target = hint.get();
+                    if (!known.contains(target)) {
+                        known.add(target);
+                    }
                     return;
                 }
                 rotate();
             }
             case UNAVAILABLE, TIMED_OUT -> rotate();
-            case OVERLOADED, INVALID -> {}
+            case OVERLOADED, INVALID, REJECTED -> {}
         }
         sleeper.sleep(backoff(config, random, attempt));
     }
 
     private void rotate() {
-        cursor = (cursor + 1) % seeds.size();
-        target = seeds.get(cursor);
+        cursor = (cursor + 1) % known.size();
+        target = known.get(cursor);
+    }
+
+    public List<InetSocketAddress> knownNodes() {
+        return List.copyOf(known);
     }
 
     private static Optional<Bytes> value(KvResponse response) {

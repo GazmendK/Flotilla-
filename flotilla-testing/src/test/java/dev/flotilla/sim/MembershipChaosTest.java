@@ -128,12 +128,13 @@ class MembershipChaosTest {
             for (NodeId id : simulation.leaders()) {
                 RaftNode raft = simulation.node(id).raft();
                 if (!raft.configuration().isVoter(id)) {
-                    assertThat(raft.configurationIndex())
+                    assertThat(raft.configurationIndex() > raft.commitIndex()
+                                    || raft.transferee().isPresent())
                             .as(
                                     "seed %d: %s leads without being a voter, which is only allowed while the change "
-                                            + "that removed it is still uncommitted",
+                                            + "that removed it is uncommitted or while it hands over to a successor",
                                     simulation.seed(), id)
-                            .isGreaterThan(raft.commitIndex());
+                            .isTrue();
                 }
             }
         }

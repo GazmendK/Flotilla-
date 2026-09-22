@@ -5,6 +5,9 @@
 package dev.flotilla.server;
 
 import dev.flotilla.core.Bytes;
+import dev.flotilla.core.CatchUpStatus;
+import dev.flotilla.core.ClusterConfig;
+import dev.flotilla.core.ConfChangeResult;
 import dev.flotilla.core.LogEntry;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftNode;
@@ -12,9 +15,11 @@ import dev.flotilla.core.RaftRole;
 import dev.flotilla.core.ReadState;
 import dev.flotilla.core.Ready;
 import dev.flotilla.core.SoftState;
+import dev.flotilla.core.TransferResult;
 import dev.flotilla.core.port.StableStore;
 import dev.flotilla.storage.DurableLogStore;
 import dev.flotilla.storage.WritableSnapshotStore;
+import dev.flotilla.transport.ClusterStatus;
 import dev.flotilla.transport.ReadConsistency;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -23,6 +28,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -48,10 +55,20 @@ final class RaftEngine implements Runnable {
 
     private record PendingRead(Bytes query, CompletableFuture<Applied> result, long registeredAtTick) {}
 
+    private record PendingTransfer(NodeId target, CompletableFuture<NodeId> result, long startedAtTick) {}
+
+    @Nullable
+    private PendingTransfer transfer;
+
+    private record PendingChange(NodeEvent.Membership request, long firstTriedAtTick) {}
+
+    private final List<PendingChange> waitingChanges = new ArrayList<>();
+
     private volatile boolean running = true;
     private volatile boolean leader;
     private volatile long publishedTerm;
     private volatile long publishedCommitIndex;
+    private volatile ClusterConfig publishedConfiguration;
     private final AtomicLong syncs = new AtomicLong();
     private final AtomicLong persistedEntries = new AtomicLong();
     private final AtomicLong batches = new AtomicLong();
@@ -84,6 +101,7 @@ final class RaftEngine implements Runnable {
         this.readTimeoutTicks = readTimeoutTicks;
         this.publishedTerm = raft.currentTerm();
         this.publishedCommitIndex = raft.commitIndex();
+        this.publishedConfiguration = raft.configuration();
     }
 
     @Override
@@ -110,6 +128,8 @@ final class RaftEngine implements Runnable {
             failPending(batch);
             failQueuedProposals(events);
             abandonReads(null);
+            abandonTransfer();
+            abandonWaitingChanges();
         }
     }
 
@@ -118,12 +138,29 @@ final class RaftEngine implements Runnable {
     }
 
     private static void failPending(List<NodeEvent> events) {
+        IllegalStateException stopped = new IllegalStateException("the server stopped before this request was taken");
         for (NodeEvent event : events) {
-            if (event instanceof NodeEvent.Proposal proposal) {
-                proposal.result()
-                        .completeExceptionally(
-                                new IllegalStateException("the server stopped before this proposal was accepted"));
+            switch (event) {
+                case NodeEvent.Proposal proposal -> proposal.result().completeExceptionally(stopped);
+                case NodeEvent.Membership membership -> membership.result().completeExceptionally(stopped);
+                case NodeEvent.Transfer handover -> handover.result().completeExceptionally(stopped);
+                case NodeEvent.Describe describe -> describe.result().completeExceptionally(stopped);
+                default -> {}
             }
+        }
+    }
+
+    private void abandonWaitingChanges() {
+        IllegalStateException stopped = new IllegalStateException("the server stopped before the change was made");
+        waitingChanges.forEach(waiting -> waiting.request().result().completeExceptionally(stopped));
+        waitingChanges.clear();
+    }
+
+    private void abandonTransfer() {
+        PendingTransfer pending = transfer;
+        transfer = null;
+        if (pending != null) {
+            pending.result().completeExceptionally(new IllegalStateException("the server stopped during the handover"));
         }
     }
 
@@ -145,6 +182,10 @@ final class RaftEngine implements Runnable {
 
     long commitIndex() {
         return publishedCommitIndex;
+    }
+
+    ClusterConfig configuration() {
+        return publishedConfiguration;
     }
 
     long syncs() {
@@ -177,13 +218,124 @@ final class RaftEngine implements Runnable {
                 ticks++;
                 raft.tick();
                 expireStaleReads();
+                settleTransfer();
+                waitingChanges.removeIf(this::tryChange);
             }
             case NodeEvent.Read read -> read(read);
             case NodeEvent.Inbound inbound -> raft.step(inbound.message());
             case NodeEvent.Proposal proposal -> propose(proposal);
             case NodeEvent.Shutdown ignored -> running = false;
             case NodeEvent.Compact compact -> compact(compact.throughIndex());
+            case NodeEvent.Membership membership -> changeMembership(membership);
+            case NodeEvent.Transfer handover -> transferLeadership(handover);
+            case NodeEvent.Describe describe -> describe(describe);
         }
+    }
+
+    private void changeMembership(NodeEvent.Membership membership) {
+        PendingChange pending = new PendingChange(membership, ticks);
+        if (!tryChange(pending)) {
+            waitingChanges.add(pending);
+        }
+    }
+
+    private boolean tryChange(PendingChange pending) {
+        NodeEvent.Membership membership = pending.request();
+        if (!raft.isLeader()) {
+            membership
+                    .result()
+                    .completeExceptionally(new NotLeaderException(raft.leader().orElse(null)));
+            return true;
+        }
+        long term = raft.currentTerm();
+        switch (raft.proposeConfChange(membership.change())) {
+            case ConfChangeResult.Rejected rejected
+            when rejected.temporary() && ticks - pending.firstTriedAtTick() < readTimeoutTicks -> {
+                return false;
+            }
+            case ConfChangeResult.Rejected rejected ->
+                membership.result().completeExceptionally(new ChangeRejectedException(rejected.reason()));
+            case ConfChangeResult.Accepted accepted -> {
+                CompletableFuture<Applied> applied = new CompletableFuture<>();
+                proposals.register(term, accepted.index(), applied);
+                CompletableFuture<Applied> _ = applied.whenComplete((ignored, failure) -> {
+                    if (failure == null) {
+                        membership.result().complete(accepted.configuration());
+                    } else {
+                        membership.result().completeExceptionally(failure);
+                    }
+                });
+            }
+        }
+        return true;
+    }
+
+    private void transferLeadership(NodeEvent.Transfer handover) {
+        if (!raft.isLeader()) {
+            handover.result()
+                    .completeExceptionally(new NotLeaderException(raft.leader().orElse(null)));
+            return;
+        }
+        switch (raft.transferLeadership(handover.target())) {
+            case TransferResult.Rejected rejected ->
+                handover.result().completeExceptionally(new ChangeRejectedException(rejected.reason()));
+            case TransferResult.Started started -> {
+                abandonTransfer();
+                transfer = new PendingTransfer(started.target(), handover.result(), ticks);
+            }
+        }
+    }
+
+    private void settleTransfer() {
+        PendingTransfer pending = transfer;
+        if (pending == null) {
+            return;
+        }
+        Optional<NodeId> leaderNow = raft.leader();
+        String failure;
+        if (leaderNow.isPresent() && leaderNow.get().equals(pending.target())) {
+            transfer = null;
+            pending.result().complete(pending.target());
+            return;
+        } else if (raft.isLeader() && raft.transferee().isEmpty()) {
+            failure = pending.target() + " did not take over within an election timeout, so " + raft.id()
+                    + " kept the leadership and accepts writes again";
+        } else if (leaderNow.isPresent() && !raft.isLeader()) {
+            failure = "leadership went to " + leaderNow.get() + " instead of " + pending.target();
+        } else if (ticks - pending.startedAtTick() >= readTimeoutTicks) {
+            failure = "no leader emerged within " + readTimeoutTicks + " ticks of the handover to " + pending.target();
+        } else {
+            return;
+        }
+        transfer = null;
+        pending.result().completeExceptionally(new ChangeRejectedException(failure));
+    }
+
+    private void describe(NodeEvent.Describe describe) {
+        if (describe.leaderOnly() && !raft.isLeader()) {
+            describe.result()
+                    .completeExceptionally(new NotLeaderException(raft.leader().orElse(null)));
+        } else {
+            describe.result().complete(status());
+        }
+    }
+
+    private ClusterStatus status() {
+        ClusterConfig configuration = raft.configuration();
+        SortedMap<NodeId, CatchUpStatus> catchUp = new TreeMap<>();
+        for (NodeId learner : configuration.learners()) {
+            raft.catchUpStatus(learner).ifPresent(status -> catchUp.put(learner, status));
+        }
+        return new ClusterStatus(
+                raft.id(),
+                raft.leader().orElse(null),
+                raft.currentTerm(),
+                configuration,
+                raft.configurationIndex(),
+                raft.configurationIndex() <= raft.commitIndex(),
+                raft.commitIndex(),
+                apply.appliedIndex(),
+                catchUp);
     }
 
     private void compact(long throughIndex) {
@@ -203,7 +355,8 @@ final class RaftEngine implements Runnable {
         long index = raft.lastLogIndex() + 1;
         if (!raft.propose(proposal.command())) {
             proposal.result()
-                    .completeExceptionally(new NotLeaderException(raft.leader().orElse(null)));
+                    .completeExceptionally(new NotLeaderException(
+                            raft.transferee().or(raft::leader).orElse(null)));
             return;
         }
         proposals.register(term, index, proposal.result());
@@ -229,9 +382,11 @@ final class RaftEngine implements Runnable {
         raft.advance();
         publishedTerm = raft.currentTerm();
         publishedCommitIndex = raft.commitIndex();
+        publishedConfiguration = raft.configuration();
         apply.submit(ready.snapshotToInstall(), committed);
         answerConfirmedReads(ready.readStates());
         ready.softState().ifPresent(ignored -> abandonReads(raft.leader().orElse(null)));
+        settleTransfer();
     }
 
     private void read(NodeEvent.Read read) {
@@ -283,7 +438,7 @@ final class RaftEngine implements Runnable {
     private void publishSoftState(SoftState state) {
         boolean nowLeader = state.role() == RaftRole.LEADER;
         if (leader && !nowLeader) {
-            proposals.failAll(state.leaderId());
+            proposals.failAbove(raft.commitIndex(), state.leaderId());
         }
         leader = nowLeader;
     }

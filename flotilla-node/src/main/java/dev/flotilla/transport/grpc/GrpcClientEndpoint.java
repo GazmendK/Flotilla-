@@ -139,6 +139,7 @@ public final class GrpcClientEndpoint implements ClientEndpoint {
             case RESOURCE_EXHAUSTED -> CallFailure.of(CallFailure.Kind.OVERLOADED, description);
             case DEADLINE_EXCEEDED -> CallFailure.of(CallFailure.Kind.TIMED_OUT, description);
             case INVALID_ARGUMENT -> CallFailure.of(CallFailure.Kind.INVALID, description);
+            case FAILED_PRECONDITION -> CallFailure.of(CallFailure.Kind.REJECTED, description);
             default -> CallFailure.of(CallFailure.Kind.UNAVAILABLE, status.getCode() + ": " + description);
         };
     }

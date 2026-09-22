@@ -80,12 +80,13 @@ public final class GrpcClientService extends ClientServiceGrpc.ClientServiceImpl
         });
     }
 
-    private static RuntimeException toStatus(CallFailure failure) {
+    static RuntimeException toStatus(CallFailure failure) {
         Status status =
                 switch (failure.kind()) {
                     case NOT_LEADER, UNAVAILABLE, TIMED_OUT -> Status.UNAVAILABLE;
                     case OVERLOADED -> Status.RESOURCE_EXHAUSTED;
                     case INVALID -> Status.INVALID_ARGUMENT;
+                    case REJECTED -> Status.FAILED_PRECONDITION;
                 };
         Metadata trailers = new Metadata();
         failure.leader().ifPresent(leader -> trailers.put(LEADER_ID, leader.value()));

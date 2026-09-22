@@ -37,8 +37,12 @@ final class ProposalRegistry {
     }
 
     void failAll(@Nullable NodeId leader) {
+        failAbove(0, leader);
+    }
+
+    void failAbove(long committedThrough, @Nullable NodeId leader) {
         List<Pending> waiting = new ArrayList<>();
-        for (Long index : pending.keySet()) {
+        for (Long index : pending.tailMap(committedThrough, false).keySet()) {
             Pending removed = pending.remove(index);
             if (removed != null) {
                 waiting.add(removed);

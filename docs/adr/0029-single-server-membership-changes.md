@@ -90,3 +90,9 @@ latest one, while that latest one has not committed, still campaigns — and doe
 vote, since it is not a voter of the configuration the election is decided in. Once the removal
 commits, it stops for good. `MembershipTest` reproduces the deadlock directly, and fails both when
 the rule is removed and when the node counts its own vote.
+
+## Amendment — 2026-09-22: a removed leader hands over before it leaves
+
+A leader whose removal has committed no longer steps down on the spot. It stops taking proposals,
+brings its most up-to-date successor level and sends it `TimeoutNow` first, so the cluster is not left
+without a leader for an election timeout. See [ADR-0031](0031-membership-administration-at-runtime.md).

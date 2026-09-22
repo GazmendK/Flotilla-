@@ -78,6 +78,22 @@ class ProposalRegistryTest {
         assertThat(second).isCompletedExceptionally();
     }
 
+    @Test
+    @DisplayName("losing leadership leaves committed proposals waiting, because they will still be applied")
+    void aCommittedProposalSurvivesTheLossOfLeadership() {
+        CompletableFuture<Applied> committed = new CompletableFuture<>();
+        CompletableFuture<Applied> uncommitted = new CompletableFuture<>();
+        registry.register(3, 7, committed);
+        registry.register(3, 8, uncommitted);
+
+        registry.failAbove(7, NodeId.of("n2"));
+
+        assertThat(committed).isNotDone();
+        assertThat(uncommitted).isCompletedExceptionally();
+        registry.completeApplied(7, 3, Bytes.ofUtf8("ok"));
+        assertThat(committed).isCompletedWithValue(new Applied(7, Bytes.ofUtf8("ok")));
+    }
+
     private static Throwable causeOf(CompletableFuture<Applied> future) {
         try {
             future.join();

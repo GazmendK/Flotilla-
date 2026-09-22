@@ -12,6 +12,22 @@ not stable before 1.0.0.
 
 ### Added
 
+- Membership at runtime. A new `AdminService` adds learners, promotes and removes members, hands over
+  leadership and describes the cluster, and `FlotillaAdmin` calls it the way `FlotillaClient` calls
+  the client service, following redirects to the leader. A refusal carries the core's reason word for
+  word; refusals that clear on their own — a leader that has not committed in its term yet, a change
+  already in flight, a learner still catching up — are retried by the leader for three election
+  timeouts before they are reported. A learner the leader has no address for is refused.
+- A leader that removes itself hands over before it steps down: it stops taking writes, brings the
+  most up-to-date voter level, and tells it to campaign. Without that, the remaining voters sat out
+  an election timeout inside the lease they had just granted it.
+- `ScaleClusterIT`: a real cluster grows from three voters to five and back to three under load,
+  removes its leader while it leads, and every client operation is checked for linearizability. With
+  the default client settings, no client sees an error.
+- `docs/operations.md` has runbooks for adding, removing and replacing a node and for rolling
+  maintenance.
+- A client remembers the leaders it was redirected to, so it still reaches the cluster after every
+  one of its seeds has been removed.
 - `MembershipChaosTest`: three voters and two spare nodes, with learners added, promoted and
   removed and leadership handed around while nodes crash and the network partitions, on sixty seeds
   by default. A new invariant checks that consecutive configurations differ in one server and that
@@ -224,6 +240,12 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- A snapshot taken after a membership change recorded the configuration the node had been started
+  with, so a node restarted from it came back with its original members. The apply loop now tracks
+  the configuration it has applied, and snapshots record that.
+- A leader that removed itself reported its own successful removal as "not the leader": stepping
+  down failed every request it was waiting for, including the one that had just committed. Requests
+  at or below the commit index are now left to be answered when they are applied.
 - A leader that appended its own removal and lost leadership before anyone else received the entry
   left the cluster unable to elect anyone: it no longer campaigned, and the remaining voter needed its
   vote. A node removed by a configuration that has not committed yet now still campaigns, without

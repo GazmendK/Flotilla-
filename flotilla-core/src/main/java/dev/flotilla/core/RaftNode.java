@@ -158,16 +158,22 @@ public final class RaftNode {
                     + leader().map(known -> "the leader is " + known).orElse("no leader is known"));
         }
         if (!hasCommittedInCurrentTerm()) {
-            return new ConfChangeResult.Rejected("This leader has not committed an entry of its own term yet. "
-                    + "Changing the configuration before that can produce two leaders with disjoint majorities.");
+            return new ConfChangeResult.Rejected(
+                    "This leader has not committed an entry of its own term yet. "
+                            + "Changing the configuration before that can produce two leaders with disjoint majorities.",
+                    true);
         }
         if (leader.transferee() != null) {
-            return new ConfChangeResult.Rejected("Leadership is being handed to " + leader.transferee()
-                    + "; configuration changes wait until that has finished.");
+            return new ConfChangeResult.Rejected(
+                    "Leadership is being handed to " + leader.transferee()
+                            + "; configuration changes wait until that has finished.",
+                    true);
         }
         if (configIndex > commitIndex) {
-            return new ConfChangeResult.Rejected("The configuration change at index " + configIndex
-                    + " is not committed yet; only one change may be in flight at a time.");
+            return new ConfChangeResult.Rejected(
+                    "The configuration change at index " + configIndex
+                            + " is not committed yet; only one change may be in flight at a time.",
+                    true);
         }
         ClusterConfig next;
         try {
@@ -177,7 +183,7 @@ public final class RaftNode {
         }
         Optional<String> unsafe = reasonAgainst(change, next, leader);
         if (unsafe.isPresent()) {
-            return new ConfChangeResult.Rejected(unsafe.get());
+            return new ConfChangeResult.Rejected(unsafe.get(), true);
         }
         long index = log.lastIndex() + 1;
         appendToOwnLog(List.of(LogEntry.configuration(currentTerm, index, ClusterConfigCodec.encode(next))));
@@ -277,10 +283,16 @@ public final class RaftNode {
         send(new TimeoutNowRequest(id(), target, currentTerm));
     }
 
-    private void abandonTransferThatTookTooLong(Leader leader) {
-        if (leader.transferee() != null && leader.ticksSinceTransferBegan() >= config.electionTimeoutMinTicks()) {
-            leader.endTransfer();
+    private boolean abandonTransferThatTookTooLong(Leader leader) {
+        if (leader.transferee() == null || leader.ticksSinceTransferBegan() < config.electionTimeoutMinTicks()) {
+            return false;
         }
+        leader.endTransfer();
+        if (hasBeenRemoved()) {
+            becomeFollower(currentTerm, null);
+            return true;
+        }
+        return false;
     }
 
     @RaftSpec(value = "§3.10 Leadership transfer extension", source = RaftSpec.Source.DISSERTATION)
@@ -571,7 +583,9 @@ public final class RaftNode {
         heartbeatElapsedTicks++;
         electionTimer.tick();
         resendSnapshotsThatWentUnanswered(leader);
-        abandonTransferThatTookTooLong(leader);
+        if (abandonTransferThatTookTooLong(leader)) {
+            return;
+        }
 
         if (heartbeatElapsedTicks >= config.heartbeatTicks()) {
             heartbeatElapsedTicks = 0;
@@ -919,7 +933,36 @@ public final class RaftNode {
             commitIndex = replicatedOnQuorum;
             startReadRoundIfPossible(leader);
         }
-        if (!cluster.isVoter(id()) && commitIndex >= configIndex) {
+        if (hasBeenRemoved()) {
+            handOverOnTheWayOut(leader);
+        }
+    }
+
+    private boolean hasBeenRemoved() {
+        return !cluster.isVoter(id()) && commitIndex >= configIndex;
+    }
+
+    @RaftSpec(value = "§3.10 Leadership transfer extension", source = RaftSpec.Source.DISSERTATION)
+    private void handOverOnTheWayOut(Leader leader) {
+        NodeId successor = leader.transferee();
+        if (successor == null) {
+            long best = -1;
+            for (NodeId voter : cluster.voters()) {
+                Progress progress = leader.progressFor(voter);
+                if (progress != null && progress.matchIndex() > best) {
+                    best = progress.matchIndex();
+                    successor = voter;
+                }
+            }
+            if (successor == null) {
+                becomeFollower(currentTerm, null);
+                return;
+            }
+            leader.beginTransfer(successor);
+        }
+        Progress progress = leader.progressFor(successor);
+        if (progress != null && progress.matchIndex() >= log.lastIndex()) {
+            sendTimeoutNow(leader, successor);
             becomeFollower(currentTerm, null);
         }
     }

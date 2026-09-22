@@ -18,8 +18,10 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 final class FakeCluster implements ClientEndpoint {
@@ -29,6 +31,7 @@ final class FakeCluster implements ClientEndpoint {
     final KvStateMachine store;
     final List<InetSocketAddress> targets = new ArrayList<>();
     final Map<Integer, Runnable> beforeCall = new HashMap<>();
+    final Set<InetSocketAddress> down = new HashSet<>();
 
     InetSocketAddress leader;
     boolean leaderKnown = true;
@@ -57,8 +60,8 @@ final class FakeCluster implements ClientEndpoint {
     public CompletableFuture<Executed> query(
             InetSocketAddress target, Bytes query, ReadConsistency consistency, Duration deadline) {
         targets.add(target);
-        if (unavailableNext > 0) {
-            unavailableNext--;
+        if (down.contains(target) || unavailableNext > 0) {
+            unavailableNext = Math.max(0, unavailableNext - (down.contains(target) ? 0 : 1));
             return CompletableFuture.failedFuture(CallFailure.of(CallFailure.Kind.UNAVAILABLE, "unreachable"));
         }
         if (!target.equals(leader) && consistency != ReadConsistency.STALE) {
@@ -74,6 +77,9 @@ final class FakeCluster implements ClientEndpoint {
         Runnable hook = beforeCall.get(targets.size());
         if (hook != null) {
             hook.run();
+        }
+        if (down.contains(target)) {
+            return CompletableFuture.failedFuture(CallFailure.of(CallFailure.Kind.UNAVAILABLE, "down"));
         }
         if (unavailableNext > 0) {
             unavailableNext--;

@@ -6,6 +6,7 @@ package dev.flotilla.server;
 
 import dev.flotilla.core.Bytes;
 import dev.flotilla.core.ClusterConfig;
+import dev.flotilla.core.ConfChange;
 import dev.flotilla.core.HardState;
 import dev.flotilla.core.NodeId;
 import dev.flotilla.core.RaftConfig;
@@ -19,6 +20,7 @@ import dev.flotilla.storage.SegmentedLogStore;
 import dev.flotilla.storage.StorageConfig;
 import dev.flotilla.storage.StorageDirectory;
 import dev.flotilla.storage.io.RealFileIo;
+import dev.flotilla.transport.ClusterStatus;
 import dev.flotilla.transport.ReadConsistency;
 import java.time.Duration;
 import java.util.Objects;
@@ -101,14 +103,14 @@ public final class RaftServer implements AutoCloseable {
         NodeId id = raftConfig.nodeId();
         EventQueue events = new EventQueue(serverConfig.eventQueueCapacity());
         FileSnapshotStore snapshotFiles = FileSnapshotStore.open(directory, serverConfig.snapshotsRetained());
-        SnapshotManager snapshots = new SnapshotManager(
-                stateMachine, snapshotFiles, cluster, events, serverConfig.snapshotPolicy(), id.value());
+        SnapshotManager snapshots =
+                new SnapshotManager(stateMachine, snapshotFiles, events, serverConfig.snapshotPolicy(), id.value());
 
         long seed = System.nanoTime() ^ ((long) id.value().hashCode() << 32);
         RaftNode raft = new RaftNode(raftConfig, cluster, log, snapshots, RandomSource.seeded(seed), persisted);
 
         ProposalRegistry proposals = new ProposalRegistry();
-        ApplyLoop apply = new ApplyLoop(stateMachine, proposals, serverConfig.applyQueueCapacity());
+        ApplyLoop apply = new ApplyLoop(stateMachine, proposals, serverConfig.applyQueueCapacity(), cluster);
         snapshots.latest().ifPresent(apply::restoreFrom);
         apply.replayThrough(log, persisted.commitIndex());
         apply.onApplied(snapshots::afterApply);
@@ -273,6 +275,43 @@ public final class RaftServer implements AutoCloseable {
                     "Server " + id + " is too busy to take the read; it was refused rather than buffered"));
         }
         return result;
+    }
+
+    public CompletableFuture<ClusterConfig> changeMembership(ConfChange change) {
+        Objects.requireNonNull(change, "change");
+        CompletableFuture<ClusterConfig> result = new CompletableFuture<>();
+        offerAdmin(new NodeEvent.Membership(change, result), result);
+        return result;
+    }
+
+    public CompletableFuture<NodeId> transferLeadership(NodeId target) {
+        Objects.requireNonNull(target, "target");
+        CompletableFuture<NodeId> result = new CompletableFuture<>();
+        offerAdmin(new NodeEvent.Transfer(target, result), result);
+        return result;
+    }
+
+    public CompletableFuture<ClusterStatus> describeCluster() {
+        return describeCluster(false);
+    }
+
+    public CompletableFuture<ClusterStatus> describeCluster(boolean leaderOnly) {
+        CompletableFuture<ClusterStatus> result = new CompletableFuture<>();
+        offerAdmin(new NodeEvent.Describe(leaderOnly, result), result);
+        return result;
+    }
+
+    public ClusterConfig configuration() {
+        return engine.configuration();
+    }
+
+    private void offerAdmin(NodeEvent event, CompletableFuture<?> result) {
+        if (closed.get() || !engine.isRunning()) {
+            result.completeExceptionally(new IllegalStateException("Server " + id + " is not running"));
+        } else if (!events.offerAdmin(event)) {
+            result.completeExceptionally(new BackpressureException(
+                    "Event queue of " + id + " is full; the request was refused rather than buffered"));
+        }
     }
 
     public void deliver(RaftMessage message) {

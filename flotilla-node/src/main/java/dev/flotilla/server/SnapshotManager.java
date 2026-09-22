@@ -25,7 +25,6 @@ final class SnapshotManager implements WritableSnapshotStore, AutoCloseable {
 
     private final StateMachine stateMachine;
     private final WritableSnapshotStore files;
-    private final ClusterConfig cluster;
     private final EventQueue events;
     private final SnapshotPolicy policy;
     private final ExecutorService worker;
@@ -42,13 +41,11 @@ final class SnapshotManager implements WritableSnapshotStore, AutoCloseable {
     SnapshotManager(
             StateMachine stateMachine,
             WritableSnapshotStore files,
-            ClusterConfig cluster,
             EventQueue events,
             SnapshotPolicy policy,
             String nodeName) {
         this.stateMachine = Objects.requireNonNull(stateMachine, "stateMachine");
         this.files = Objects.requireNonNull(files, "files");
-        this.cluster = Objects.requireNonNull(cluster, "cluster");
         this.events = Objects.requireNonNull(events, "events");
         this.policy = Objects.requireNonNull(policy, "policy");
         this.worker = Executors.newSingleThreadExecutor(runnable -> {
@@ -70,7 +67,7 @@ final class SnapshotManager implements WritableSnapshotStore, AutoCloseable {
         covered.accumulateAndGet(snapshot.lastIncludedIndex(), Math::max);
     }
 
-    void afterApply(long appliedIndex, long appliedTerm, long bytesApplied) {
+    void afterApply(long appliedIndex, long appliedTerm, ClusterConfig configuration, long bytesApplied) {
         bytesSinceSnapshot += bytesApplied;
         if (!policy.isDue(appliedIndex, covered.get(), bytesSinceSnapshot)) {
             return;
@@ -88,19 +85,19 @@ final class SnapshotManager implements WritableSnapshotStore, AutoCloseable {
         bytesSinceSnapshot = 0;
 
         try {
-            worker.execute(() -> writeAndCompact(capture, appliedIndex, appliedTerm));
+            worker.execute(() -> writeAndCompact(capture, appliedIndex, appliedTerm, configuration));
         } catch (RejectedExecutionException shuttingDown) {
             capture.close();
             inProgress.set(false);
         }
     }
 
-    private void writeAndCompact(StateCapture capture, long index, long term) {
+    private void writeAndCompact(StateCapture capture, long index, long term, ClusterConfig configuration) {
         try (capture) {
             if (index <= covered.get()) {
                 return;
             }
-            save(new Snapshot(index, term, cluster, capture.serialize()));
+            save(new Snapshot(index, term, configuration, capture.serialize()));
             taken.incrementAndGet();
             events.offerCompact(new NodeEvent.Compact(index));
         } catch (RuntimeException failure) {
