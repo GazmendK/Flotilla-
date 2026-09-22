@@ -162,7 +162,9 @@ too. Every client records its operations through `HistoryRecorder`, and the whol
 through the checker.
 
 One run completed 1,376 reads and 840 writes with three unknown outcomes, and the checker needed
-53 ms. The test refuses to pass on fewer than a hundred of each.
+53 ms. The test refuses to pass on fewer than a hundred of each. A slow Windows runner once managed
+only 68 writes in the fixed schedule, so after the last restart the clients now keep going until
+150 of each have completed, for at most thirty seconds, instead of the bar being lowered.
 
 Making the server answer linearizable reads from whatever the receiving node has applied fails the
 test on each of three runs. The first version of the test, without the two follower readers, passed

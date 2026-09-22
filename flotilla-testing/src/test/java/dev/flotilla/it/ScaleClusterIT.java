@@ -209,6 +209,7 @@ class ScaleClusterIT {
             steps.add(elapsed() + " final: " + last.configuration() + " led by " + last.leader());
             assertThat(last.configuration()).isEqualTo(ClusterConfig.ofVoters(N3, N4, N5));
             assertThat(last.configurationCommitted()).isTrue();
+            KvHistories.keepGoingUntil(history, 150, 150, Duration.ofSeconds(30));
         } finally {
             stop.set(true);
             finished.await();

@@ -202,6 +202,7 @@ class RealClusterLinearizabilityIT {
         Thread.sleep(2_000);
         start(secondLeader);
         Thread.sleep(1_500);
+        KvHistories.keepGoingUntil(history, 150, 150, Duration.ofSeconds(30));
         stop.set(true);
         finished.await();
         clients.forEach(FlotillaClient::close);

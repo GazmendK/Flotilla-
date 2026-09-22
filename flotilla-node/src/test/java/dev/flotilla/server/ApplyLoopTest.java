@@ -63,6 +63,9 @@ class ApplyLoopTest {
 
         try (RaftServer server = start()) {
             assertThat(server.awaitLeadership(PATIENCE)).isTrue();
+            assertThat(server.awaitApplied(1, PATIENCE))
+                    .as("the leader's own no-op never reaches the state machine and is applied regardless")
+                    .isTrue();
             long appliedBefore = server.appliedIndex();
             stateMachine.blockUntilReleased(gate);
 

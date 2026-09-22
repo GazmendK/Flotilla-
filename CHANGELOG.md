@@ -240,6 +240,11 @@ not stable before 1.0.0.
 
 ### Fixed
 
+- Two tests failed on CI runners and never locally. `ApplyLoopTest` measured the applied index before
+  the new leader's no-op had been applied, which a slow machine then applied during the test. And
+  `RealClusterLinearizabilityIT` required a hundred writes from a fixed schedule that a slow Windows
+  runner could not fill; the real-cluster tests now keep their clients running until enough
+  operations have completed.
 - A snapshot taken after a membership change recorded the configuration the node had been started
   with, so a node restarted from it came back with its original members. The apply loop now tracks
   the configuration it has applied, and snapshots record that.

@@ -10,6 +10,7 @@ import dev.flotilla.kv.Command;
 import dev.flotilla.kv.KvResponse;
 import dev.flotilla.linearizability.KvModel;
 import dev.flotilla.linearizability.Operation;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -50,6 +51,18 @@ final class KvHistories {
             }
         }
         return operations;
+    }
+
+    static void keepGoingUntil(HistoryRecorder history, long reads, long writes, Duration limit)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + limit.toNanos();
+        while (System.nanoTime() < deadline) {
+            List<Operation<KvModel.Input, KvModel.Output>> sofar = operations(history.events());
+            if (completedReads(sofar) >= reads && completedWrites(sofar) >= writes) {
+                return;
+            }
+            Thread.sleep(100);
+        }
     }
 
     static long completedReads(List<Operation<KvModel.Input, KvModel.Output>> operations) {
